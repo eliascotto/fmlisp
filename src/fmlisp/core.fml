@@ -1,0 +1,6 @@
+(ns ^{:doc "The core FMLisp language."
+      :author "Elia Scotto"}
+ fmlisp.core)
+
+(def not
+  (fn [a] (if a false true)))
