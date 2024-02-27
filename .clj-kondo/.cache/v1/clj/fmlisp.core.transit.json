@@ -1,1 +1,0 @@
-["^ ","~$not",["^ ","~:row",5,"~:col",1,"~:fixed-arities",["~#set",[1]],"~:name","^0","~:ns","~$fmlisp.core","~:top-ns","^7","~:arities",["^ ","~i1",["^ ","~:ret",["^4",["~:boolean"]],"~:arglist-str","[a]"]],"~:type","~:fn"],"~:filename","/Users/elia/dev/Rust/fmlisp/src/fmlisp/core.fml"]
