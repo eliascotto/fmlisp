@@ -11,7 +11,7 @@ use itertools::Itertools;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-fn ns(args: ExprArgs, env: &Environment) -> ValueRes {
+fn ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
         return error("Wrong number of arguments passed to ns. Expecting 1");
     }
@@ -24,7 +24,7 @@ fn ns(args: ExprArgs, env: &Environment) -> ValueRes {
     }
 }
 
-fn find_ns(args: ExprArgs, env: &Environment) -> ValueRes {
+fn find_ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
         return error("Wrong number of arguments passed to find-ns. Expecting 1");
     }
@@ -38,7 +38,7 @@ fn find_ns(args: ExprArgs, env: &Environment) -> ValueRes {
     }
 }
 
-fn all_ns(args: ExprArgs, env: &Environment) -> ValueRes {
+fn all_ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if !args.is_empty() {
         return error("Wrong number of arguments passed to all-ns. Expecting none");
     }
@@ -51,7 +51,7 @@ fn all_ns(args: ExprArgs, env: &Environment) -> ValueRes {
 /// If passed a namespace, returns it. Else, when passed a symbol,
 /// returns the namespace named by it, throwing an exception if not
 /// found.
-fn the_ns(args: ExprArgs, env: &Environment) -> ValueRes {
+fn the_ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
         return error("Wrong number of arguments passed to the-ns. Expecting 1");
     }
@@ -67,7 +67,7 @@ fn the_ns(args: ExprArgs, env: &Environment) -> ValueRes {
 }
 
 /// Returns the ns from a Var or a Symbol
-fn get_ns(args: ExprArgs, env: &Environment) -> ValueRes {
+fn get_ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
         return error("Wrong number of arguments passed to the-ns. Expecting 1");
     }
@@ -85,7 +85,7 @@ fn get_ns(args: ExprArgs, env: &Environment) -> ValueRes {
     }
 }
 
-fn ns_map(args: ExprArgs, env: &Environment) -> ValueRes {
+fn ns_map(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
         return error("Wrong number of arguments passed to ns-mappings. Expecting 1");
     }
@@ -106,7 +106,7 @@ fn ns_map(args: ExprArgs, env: &Environment) -> ValueRes {
     }
 }
 
-fn ns_unmap(args: ExprArgs, _env: &Environment) -> ValueRes {
+fn ns_unmap(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if args.len() != 2 {
         return error("Wrong number of arguments passed to ns-mappings. Expecting 2");
     }
@@ -129,7 +129,7 @@ fn ns_unmap(args: ExprArgs, _env: &Environment) -> ValueRes {
 // Currently we give precedence to the namespace for the symbol lookup, avoiding an override
 // if the symbol is already present. Referrers are kept in a separate table.
 // Clojure instead, override the symbol if already present.
-fn refer(args: ExprArgs, env: &Environment) -> ValueRes {
+fn refer(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if !args.len().is_odd() {
         return error("Wrong number of arguments passed to ns. Expecting at least 1");
     }

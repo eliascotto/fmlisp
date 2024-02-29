@@ -5,6 +5,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use crate::core;
 use crate::env::Environment;
 use crate::keyword::Keyword;
 use crate::namespaces::Namespace;
@@ -34,12 +35,12 @@ pub enum Value {
     // FUNCTIONS
     // Internal fmlisp functions
     Func(
-        fn(ExprArgs, &Environment) -> ValueRes,
+        fn(ExprArgs, Rc<Environment>) -> ValueRes,
         Option<HashMap<Value, Value>>,
     ),
     // Internal Macros
     Macro(
-        fn(ExprArgs, &Environment) -> ValueRes,
+        fn(ExprArgs, Rc<Environment>) -> ValueRes,
         Option<HashMap<Value, Value>>,
     ),
     // All Lisp functions
@@ -299,9 +300,9 @@ impl Value {
         }
     }
 
-    pub fn apply(&self, args: ExprArgs, env: &Environment) -> ValueRes {
+    pub fn apply(&self, args: ExprArgs, env: Rc<Environment>) -> ValueRes {
         match *self {
-            Value::Func(f, _) | Value::Macro(f, _) => f(args, env),
+            Value::Func(f, _) | Value::Macro(f, _) => f(args, env.clone()),
             Value::DefinedFunc {
                 ref ast,
                 ref env,
@@ -310,7 +311,7 @@ impl Value {
             } => {
                 let a = &**ast;
                 let fn_env = Rc::new(env.bind(params.clone(), args.clone())?);
-                Ok(fn_env.eval(&a.clone())?)
+                Ok(core::eval(a.clone(), fn_env)?)
             }
             _ => error("Attempt to call a non-function"),
         }
@@ -375,7 +376,7 @@ impl Value {
         }
     }
 
-    pub fn swap_bang(&self, args: &ExprArgs, env: &Environment) -> ValueRes {
+    pub fn swap_bang(&self, args: &ExprArgs, env: Rc<Environment>) -> ValueRes {
         match self {
             Value::Atom(a) => {
                 let f = &args[0];
@@ -727,11 +728,11 @@ pub fn _dissoc(
     Ok(Value::HashMap(Rc::new(hm), meta.clone()))
 }
 
-pub fn func(f: fn(ExprArgs, &Environment) -> ValueRes) -> Value {
+pub fn func(f: fn(ExprArgs, Rc<Environment>) -> ValueRes) -> Value {
     Value::Func(f, None)
 }
 
-pub fn macro_fn(m: fn(ExprArgs, &Environment) -> ValueRes) -> Value {
+pub fn macro_fn(m: fn(ExprArgs, Rc<Environment>) -> ValueRes) -> Value {
     Value::Macro(m, None)
 }
 
@@ -906,8 +907,9 @@ mod tests {
     #[test]
     fn test_apply() {
         let env = Environment::default();
+        let rc_env = Rc::new(env);
 
-        fn sum_fn(a: ExprArgs, _env: &Environment) -> ValueRes {
+        fn sum_fn(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             match (a[0].clone(), a[1].clone()) {
                 (Value::Integer(a0), Value::Integer(a1)) => Ok(Value::Integer(a0 + a1)),
                 _ => error("wrong params"),
@@ -918,7 +920,7 @@ mod tests {
 
         assert_eq!(
             value
-                .apply(vec![Value::Integer(1), Value::Integer(3)], &env)
+                .apply(vec![Value::Integer(1), Value::Integer(3)], rc_env)
                 .unwrap(),
             Value::Integer(4)
         );
@@ -928,11 +930,12 @@ mod tests {
     #[should_panic(expected = "Attempt to call a non-function")]
     fn test_apply_with_errors() {
         let env = Environment::default();
+        let rc_env = Rc::new(env);
 
         // Apply should only be used on functions
         assert_eq!(
             Value::Str("test".to_string())
-                .apply(vec![Value::Integer(1)], &env)
+                .apply(vec![Value::Integer(1)], rc_env)
                 .unwrap(),
             Value::Integer(4)
         );
@@ -1039,6 +1042,7 @@ mod tests {
         let atom_value = Value::Integer(42);
         let atom = atom(&atom_value);
         let env = Environment::default();
+        let rc_env = Rc::new(env);
 
         // Define a function that increments the value by 1
         let inc_fn = Value::Func(
@@ -1054,7 +1058,7 @@ mod tests {
 
         // Call swap_bang with the increment function
         let args = vec![inc_fn];
-        assert_eq!(atom.swap_bang(&args, &env).unwrap(), Value::Integer(43));
+        assert_eq!(atom.swap_bang(&args, rc_env).unwrap(), Value::Integer(43));
 
         // Check if the value of the atom has been successfully updated
         let atom_cell = match atom {
@@ -1071,9 +1075,10 @@ mod tests {
         let non_atom = Value::Integer(42);
         let args = vec![];
         let env = Environment::default();
+        let rc_env = Rc::new(env);
 
         // This should panic since we are attempting to swap a non-Atom
-        let _ = non_atom.swap_bang(&args, &env).unwrap();
+        let _ = non_atom.swap_bang(&args, rc_env).unwrap();
     }
 
     // with-meta
@@ -1218,7 +1223,7 @@ mod tests {
 
     #[test]
     fn test_func_fn() {
-        fn test_this(_a: ExprArgs, _env: &Environment) -> ValueRes {
+        fn test_this(_a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             Ok(Value::Integer(1))
         }
 

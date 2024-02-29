@@ -8,7 +8,8 @@ use crate::core;
 use crate::env::Environment;
 use crate::reader;
 use crate::symbol::Symbol;
-use crate::values::{format_error, LispError, Value, ValueRes};
+use crate::values::LispError;
+use crate::values::{format_error, Value, ValueRes};
 
 fn read(s: &str) -> ValueRes {
     reader::read_str(s.to_string())
@@ -33,7 +34,7 @@ impl Repl {
 
     pub fn rep(&self, s: &str) -> Result<String, LispError> {
         let ast: Value = read(s)?;
-        let exp: Value = self.environment.eval(&ast)?;
+        let exp: Value = core::eval(ast.clone(), self.environment.clone())?;
         Ok(print(exp))
     }
 

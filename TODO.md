@@ -1,6 +1,6 @@
 ## TODO
 
-- `recur`
+- `recur` (probably useless if we do full TCO)
 - Move delcaration of lang into `fmlisp.lang`
 - Initially load from `core.fml`
 - Start to implement language from `core.fml`

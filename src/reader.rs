@@ -1,8 +1,6 @@
 use regex::{Captures, Regex};
-use std::fs::read_to_string;
 use std::rc::Rc;
 
-use crate::env::Environment;
 use crate::keyword::Keyword;
 use crate::symbol::Symbol;
 use crate::values::LispError::ErrString;
