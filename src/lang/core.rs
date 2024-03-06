@@ -6,12 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::core;
 use crate::env::Environment;
+use crate::errors;
 use crate::reader;
 use crate::symbol::Symbol;
-use crate::values::LispError::ErrValue;
+use crate::values::LispErr::ErrValue;
 use crate::values::{
     self, _assoc, _dissoc, error, func, hash_map_from_vec, list_from_vec, macro_fn, set_from_vec,
-    vector_from_vec, ExprArgs, LispError, ToValue, Value, ValueRes,
+    vector_from_vec, ExprArgs, LispErr, Value, ValueRes,
 };
 
 /// Macro that receive an Integer and eval the expr.
@@ -49,13 +50,14 @@ macro_rules! fn_is_type {
     }};
 }
 
+/// Returns the file content evaluated, or an error.
 pub fn load_file(path: &String, env: Rc<Environment>) -> ValueRes {
     match read_to_string(path) {
         Ok(data) => {
-            // Read string
-            let s = reader::read_str(data)?;
-            // Eval code
-            core::eval(s, env.to_rc())
+            // We use `do` to read the entire file as a single sexpr
+            let file_data = format!("(do {})", data);
+            let s = reader::read_str(file_data)?;
+            core::eval(s, env.clone())
         }
         Err(e) => error(&e.to_string()),
     }
@@ -286,6 +288,38 @@ fn next(a: ExprArgs, env: Rc<Environment>) -> ValueRes {
     }
 }
 
+fn last(a: ExprArgs, env: Rc<Environment>) -> ValueRes {
+    if a.len() != 1 {
+        return error("Wrong number of arguments passed to last. Expecting 1");
+    }
+    match a[0].clone() {
+        Value::List(seq, _) | Value::Vector(seq, _) => {
+            Ok(seq.last().unwrap_or(&Value::Nil).clone())
+        }
+        Value::Str(_) => last(vec![a[0].to_chars_list().unwrap()], env),
+        Value::Nil => Ok(Value::Nil),
+        _ => error("last called with non-seq"),
+    }
+}
+
+fn butlast(a: ExprArgs, env: Rc<Environment>) -> ValueRes {
+    if a.len() != 1 {
+        return error("Wrong number of arguments passed to butlast. Expecting 1");
+    }
+    match a[0].clone() {
+        Value::List(seq, _) | Value::Vector(seq, _) => {
+            if seq.len() > 1 {
+                Ok(list_from_vec(seq[..seq.len() - 1].to_vec()))
+            } else {
+                Ok(Value::Nil)
+            }
+        }
+        Value::Str(_) => butlast(vec![a[0].to_chars_list().unwrap()], env),
+        Value::Nil => Ok(Value::Nil),
+        _ => error("butlast called with non-seq"),
+    }
+}
+
 fn apply(a: ExprArgs, env: Rc<Environment>) -> ValueRes {
     match a[a.len() - 1] {
         Value::List(ref v, _) | Value::Vector(ref v, _) => {
@@ -499,7 +533,20 @@ fn throw(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
         return error("Wrong number of arguments passed to throw. Expecting 1");
     }
-    Err(ErrValue(args[0].clone()))
+    Err(ErrValue(Box::new(args[0].clone())))
+}
+
+fn error_fn(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return error("Wrong number of arguments passed to error. Expecting 1");
+    }
+    match args[0] {
+        Value::Str(_) => {
+            let e = errors::Error::new(args[0].clone()).to_lisp_error();
+            Ok(Value::Error(e))
+        }
+        _ => error!("error requires string as first parameter"),
+    }
 }
 
 fn empty_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
@@ -551,22 +598,6 @@ fn atom(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     Ok(values::atom(&args[0]))
 }
 
-fn var_fn(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
-    if args.len() != 1 {
-        return error!("Wrong number of arguments passed to var. Expecting 1");
-    }
-    match args[0].clone() {
-        Value::Symbol(sym) => {
-            let val = env.get(&sym);
-            match val.as_ref() {
-                Value::Var(_) => Ok(val.to_value()),
-                _ => error!("Unable to resolve var"),
-            }
-        }
-        _ => error!("var requires a symbol"),
-    }
-}
-
 fn instance_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if args.len() != 2 {
         return error("Wrong number of arguments passed to instance?. Expecting 2");
@@ -588,9 +619,10 @@ fn instance_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             Value::Set(_, _) => sym.name == "Set",
             Value::Func(_, _) => sym.name == "Function",
             Value::Macro(_, _) => sym.name == "Function",
-            Value::DefinedFunc { .. } => sym.name == "Function",
+            Value::Lambda { .. } => sym.name == "Function",
             Value::Namespace(_) => sym.name == "Namespace",
             Value::Atom(_) => sym.name == "Atom",
+            Value::Error(_) => sym.name == "Error",
         },
         _ => return error!("instance? requires symbol as first parameter"),
     };
@@ -738,6 +770,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         // STRING
         ("str", func(|a, _| Ok(Value::Str(pr_seq(&a, "", "", ""))))),
         ("string?", func(fn_is_type!(Value::Str(_)))),
+        ("char?", func(fn_is_type!(Value::Char(_)))),
         ("list", func(|a, _| Ok(list_from_vec(a)))),
         ("list?", func(fn_is_type!(Value::List(_, _)))),
         ("empty?", func(empty_q)),
@@ -752,6 +785,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("reset!", func(reset_bang)),
         ("swap!", func(swap_bang)),
         // COLLECTIONS
+        ("vector?", func(fn_is_type!(Value::Vector(_, _)))),
         ("cons", func(cons)),
         ("concat", func(concat)),
         ("conj", func(conj)),
@@ -761,7 +795,8 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("second", func(second)),
         ("rest", func(rest)),
         ("next", func(next)),
-        ("throw", func(throw)),
+        ("last", func(last)),
+        ("butlast", func(butlast)),
         ("apply", func(apply)),
         ("map", func(map)),
         ("nil?", func(fn_is_type!(Value::Nil))),
@@ -791,11 +826,11 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("number?", func(fn_is_type!(Value::Integer(_)))),
         (
             "fn?",
-            func(fn_is_type!(Value::DefinedFunc{is_macro,..} if !is_macro, Value::Func(_,_))),
+            func(fn_is_type!(Value::Lambda{is_macro,..} if !is_macro, Value::Func(_,_))),
         ),
         (
             "macro?",
-            func(fn_is_type!(Value::DefinedFunc{is_macro,..} if is_macro)),
+            func(fn_is_type!(Value::Lambda{is_macro,..} if is_macro)),
         ),
         ("time-ms", func(time_ms)),
         ("seq", func(seq)),
@@ -809,7 +844,9 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("intern", func(intern)),
         ("print-debug", macro_fn(print_debug)),
         ("load-file", func(load_file_fn)),
-        ("var", macro_fn(var_fn)),
+        // ERROR HANDLING
+        ("throw", func(throw)),
+        ("error", func(error_fn)),
     ]
 }
 

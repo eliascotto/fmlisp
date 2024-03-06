@@ -6,13 +6,18 @@ use std::rc::Rc;
 
 use crate::env::Environment;
 use crate::lang;
+use crate::reader;
 use crate::symbol::Symbol;
-use crate::values::LispError::{self, ErrString, ErrValue};
-use crate::values::{ExprArgs, ToValue, Value, ValueRes};
+use crate::values::keyword;
+use crate::values::LispErr::{self};
+use crate::values::{format_error, ExprArgs, ToValue, Value, ValueRes};
 use crate::var::Var;
 
-pub fn load_core(env: &Environment) {
-    env.change_or_create_namespace(&Symbol::new("fmlisp.core"));
+/// Load the core functions and symbols into the namespace
+pub fn load_core(env: Rc<Environment>) {
+    env.change_or_create_namespace(&sym!("fmlisp.lang"));
+
+    // Loading internal definitions
 
     for (k, v) in lang::core::internal_symbols(&env) {
         env.insert_var(Symbol::new(k), v.to_rc_value());
@@ -31,6 +36,27 @@ pub fn load_core(env: &Environment) {
             env.insert_var(Symbol::new(k), v.to_rc_value());
         }
     }
+
+    // Now loading definitions directly from FMLisp files
+    match lang::core::load_file(&String::from("src/fmlisp/core.fml"), env.clone()) {
+        Err(e) => eprintln!("{}", format_error(e)),
+        Ok(_) => {}
+    }
+
+    // Change to default user namespace
+    env.change_or_create_namespace(&Symbol::new("user"));
+
+    let _ = env.add_referred_namespace(&sym!("fmlisp.core"));
+}
+
+// Transform string into a FMLisp Value
+pub fn read(s: &str) -> ValueRes {
+    reader::read_str(s.to_string())
+}
+
+// Transform the Value to string
+pub fn print(exp: Value) -> String {
+    exp.pr_str()
 }
 
 fn qq_iter(elts: &ExprArgs) -> Value {
@@ -80,7 +106,7 @@ fn is_macro_call(ast: Value, env: Rc<Environment>) -> Option<(Value, ExprArgs)> 
                 match env.get_symbol_value(s) {
                     Some(val) => {
                         match (*val).clone() {
-                            f @ Value::DefinedFunc { is_macro: true, .. } => {
+                            f @ Value::Lambda { is_macro: true, .. } => {
                                 // Evaluate the arguments before apply the macro fn
                                 let args = v[1..]
                                     .iter()
@@ -100,7 +126,9 @@ fn is_macro_call(ast: Value, env: Rc<Environment>) -> Option<(Value, ExprArgs)> 
     }
 }
 
-fn macroexpand(mut ast: Value, env: Rc<Environment>) -> (bool, Result<Rc<Value>, LispError>) {
+// Expand the Macro call, if found in the code. It returns a tuple
+// with `true` if a macro has been expanded, and the expanded AST, false otherwise.
+fn macroexpand(mut ast: Value, env: Rc<Environment>) -> (bool, Result<Rc<Value>, LispErr>) {
     let mut was_expanded = false;
     while let Some((mf, args)) = is_macro_call(ast.clone(), env.clone()) {
         ast = match mf.apply(args, env.clone()) {
@@ -112,7 +140,7 @@ fn macroexpand(mut ast: Value, env: Rc<Environment>) -> (bool, Result<Rc<Value>,
     (was_expanded, Ok(Rc::new(ast)))
 }
 
-fn eval_ast(ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispError> {
+fn eval_ast(ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispErr> {
     match ast.clone() {
         // Symbol returns value in env 'sym ;=> 12
         Value::Symbol(sym) => match env.get_symbol_value(&sym) {
@@ -149,8 +177,16 @@ fn eval_ast(ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispError> {
     }
 }
 
-pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispError> {
-    let ret: Result<Rc<Value>, LispError>;
+fn get_meta_key(meta: Option<HashMap<Value, Value>>, key: Value) -> Option<Value> {
+    match meta {
+        Some(m) => m.get(&key).cloned(),
+        None => None,
+    }
+}
+
+pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispErr> {
+    let ret: Result<Rc<Value>, LispErr>;
+
     // I'm using a RefCell here to swapping the env inside the loop.
     // I avoided using a reference to an Environment object to keep
     // the code safe from manipulation. Instead of a reference, we use a
@@ -162,7 +198,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
     // He're the loop gave us the Tail Call Optimization, avoiding
     // to fill the stack with useless tail call to `eval` and instead
     // looping trough the AST.
-    // TCO is used by let, apply, if, quasiquote do, try/catch
+    //
+    // TCO is used by if, let, apply, quasiquote do, try/catch, case, etc.
+    // Wherever you see `continue 'tco;` means that instead of calling eval
+    // recursively, we eval the rest in a loop.
     'tco: loop {
         ret = match ast.clone() {
             Value::List(l, _) => {
@@ -170,7 +209,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                     return Ok(ast.to_rc_value());
                 }
 
-                // catch a macro symbol before eval the list
+                // Catch a macro symbol before evaluate the list
                 match macroexpand(ast.clone(), mut_env.borrow().clone()) {
                     // Eval the extended ast
                     (true, Ok(new_ast)) => {
@@ -200,6 +239,19 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 } else {
                                     Value::Nil.to_rc_value()
                                 };
+                                let sym_meta = sym.meta();
+
+                                // Copy Meta from symbol into the Lambda definition
+                                let value = match &*value {
+                                    f @ Value::Lambda { .. } => {
+                                        let meta_val =
+                                            Value::HashMap(Rc::new(sym_meta.clone()), None);
+                                        let new_val = f.clone().with_meta(&meta_val).unwrap();
+                                        Rc::new(new_val)
+                                    }
+                                    _ => value.clone(),
+                                };
+
                                 // Creates a Symbol
                                 let new_sym = Symbol::new_with_ns(
                                     &sym.name,
@@ -211,7 +263,6 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                     new_sym.unqualified(),
                                     value.clone(),
                                 );
-                                let sym_meta = sym.meta();
                                 if !sym_meta.is_empty() {
                                     new_var.with_meta(Rc::new(sym_meta));
                                 }
@@ -222,7 +273,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                     .insert(new_sym.unqualified(), value_var.clone());
                                 Ok(value_var)
                             }
-                            _ => Err(ErrString(
+                            _ => Err(LispErr::ErrString(
                                 "First argument to def must be a symbol".to_string(),
                             )),
                         }
@@ -339,7 +390,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             Some(v) => v,
                             None => &Value::Nil,
                         };
-                        Ok(Rc::new(Value::DefinedFunc {
+                        Ok(Rc::new(Value::Lambda {
                             ast: Rc::new((*body).clone()),
                             env: mut_env.borrow().clone(),
                             params: Rc::new(params),
@@ -390,10 +441,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                         let macro_args = args[1].clone();
                         let r = eval(macro_args, mut_env.borrow().clone())?;
                         match r {
-                            Value::DefinedFunc {
+                            Value::Lambda {
                                 ast, env, params, ..
                             } => {
-                                let val = Value::DefinedFunc {
+                                let val = Value::Lambda {
                                     ast: ast.clone(),
                                     env: env.clone(),
                                     params: params.clone(),
@@ -415,23 +466,26 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                         }
                     }
                     Value::Symbol(ref headsym) if headsym.name() == "try" => {
+                        // Make sure to lazy-evaluate the alternative try form!
                         if args.len() < 2 {
                             return error!(
                                 "Wrong number of arguments given to try. Expecting at least 2"
                             );
                         }
                         match eval(args[0].clone(), mut_env.borrow().clone()) {
+                            // Capture the evaluation error here
                             Err(ref e) if args.len() >= 2 => {
                                 let ex = match e {
-                                    ErrValue(v) => v.clone(),
-                                    ErrString(s) => Value::Str(s.to_string()),
+                                    LispErr::ErrValue(v) => *v.clone(),
+                                    LispErr::ErrString(s) => Value::Str(s.to_string()),
+                                    LispErr::Error(e) => Value::Str(e.to_string()),
                                 };
                                 match args[1].clone() {
                                     Value::List(c, _) => {
                                         let catch_env = mut_env
                                             .borrow()
                                             .bind(list![c[1].clone()].to_rc_value(), vec![ex])?;
-                                        Ok(eval_to_rc(c[2].clone(), Rc::new(catch_env))?)
+                                        Ok(eval_to_rc(c[2].clone(), catch_env)?)
                                     }
                                     _ => error!("Invalid catch block"),
                                 }
@@ -439,11 +493,59 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             res => Ok(res.unwrap().to_rc_value()),
                         }
                     }
+                    Value::Symbol(ref headsym) if headsym.name() == "var" => {
+                        if args.len() != 1 {
+                            return error!("Wrong number of arguments passed to var. Expecting 1");
+                        }
+                        match args[0].clone() {
+                            Value::Symbol(sym) => {
+                                let val = env.get(&sym);
+                                match val.as_ref() {
+                                    Value::Var(_) => Ok(val.to_rc_value()),
+                                    _ => error!("Unable to resolve var"),
+                                }
+                            }
+                            _ => error!("var requires a symbol"),
+                        }
+                    }
+                    Value::Symbol(ref headsym) if headsym.name() == "throw" => {
+                        if args.len() != 1 {
+                            return error!(
+                                "Wrong number of arguments passed to throw. Expecting 1"
+                            );
+                        }
+                        match eval(args[0].clone(), mut_env.borrow().clone()) {
+                            Ok(res) => match res {
+                                Value::Error(err) => Err(err),
+                                _ => error!("throw argument has to be an error"),
+                            },
+                            Err(e) => error!(format_error(e)),
+                        }
+                    }
+                    Value::Keyword(_) => {
+                        // Keyword can extract a value from a hashmap
+                        if args.len() != 1 {
+                            return error!("Wrong number of arguments used to destructuring a map. Expecting 1");
+                        }
+                        match eval(args[0].clone(), mut_env.borrow().clone()) {
+                            Ok(res) => match res {
+                                Value::HashMap(hm, _) => {
+                                    let val = hm.get(head);
+                                    match val {
+                                        Some(v) => Ok(v.to_rc_value()),
+                                        None => Ok(Value::Nil.to_rc_value()),
+                                    }
+                                }
+                                _ => Ok(Value::Nil.to_rc_value()),
+                            },
+                            Err(e) => error!(format_error(e)),
+                        }
+                    }
                     _ => {
-                        // At this point we just execute the function.
-                        // First we evaluate the function
+                        // At this point we just have to execute the function
                         let ref f = eval_to_rc(head.clone(), mut_env.borrow().clone())?;
                         match &*f.borrow() {
+                            // Internal FMLisp function
                             Value::Func(_, _) => {
                                 let evaled_args = args
                                     .iter()
@@ -455,27 +557,39 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 Ok(ret.to_rc_value())
                             }
                             // An internal macro, is a function which the parameter are not evaluated,
-                            // but passed to the function as is (so keeping symbols etc).
+                            // but passed to the function as is (keeping symbols).
                             Value::Macro(_, _) => {
                                 let ret = f.apply(args.clone(), mut_env.borrow().clone())?;
                                 Ok(ret.to_rc_value())
                             }
-                            Value::DefinedFunc {
+                            // Lambda function defined by the user
+                            Value::Lambda {
                                 ast: mast,
                                 env: menv,
                                 params,
+                                meta,
                                 ..
                             } => {
+                                let is_macro = get_meta_key(meta.clone(), keyword("macro"))
+                                    == Some(Value::Bool(true));
                                 let a = &**mast;
-                                let evaled_args = args
-                                    .iter()
-                                    .map(|rc_arg| {
-                                        eval(rc_arg.clone(), mut_env.borrow().clone()).unwrap()
-                                    })
-                                    .collect::<Vec<Value>>();
-                                let new_env = menv.bind(params.clone(), evaled_args)?;
-                                ast = a.borrow().clone();
-                                mut_env.replace(Rc::new(new_env));
+
+                                // A macro can also be defined using metadata. If the function is a macro
+                                // avoid evaluating the arguments.
+                                let bind_args = if is_macro {
+                                    args.clone()
+                                } else {
+                                    args.iter()
+                                        .map(|rc_arg| {
+                                            eval(rc_arg.clone(), mut_env.borrow().clone()).unwrap()
+                                        })
+                                        .collect::<Vec<Value>>()
+                                };
+                                // Now bind the arguments to the lambda params in a new env
+                                let new_env = menv.bind(params.clone(), bind_args)?;
+
+                                ast = a.clone();
+                                mut_env.replace(new_env);
                                 continue 'tco;
                             }
                             _ => error!(format!("Attempt to call non-function {}", f)),

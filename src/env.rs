@@ -1,13 +1,11 @@
-use itertools::Itertools;
-use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::namespaces::{Namespace, Namespaces};
 use crate::symbol::Symbol;
-use crate::values::LispError::{self, ErrString, ErrValue};
-use crate::values::{list_from_vec, ExprArgs, ToValue, Value, ValueRes};
+use crate::values::LispErr::{self, ErrString};
+use crate::values::{list_from_vec, ToValue, Value, ValueRes};
 use crate::var::Var;
 
 /// Keeps track of internal environment data:
@@ -148,7 +146,7 @@ pub enum Environment {
 impl Default for Environment {
     /// Creates an empty `Environment` with `user` as namesapce.
     fn default() -> Environment {
-        Environment::new_main_environment("fmlisp.core")
+        Environment::new_main_environment("fmlisp.lang")
     }
 }
 
@@ -267,15 +265,14 @@ impl Environment {
 
     /// Refer a namespace into the current namespace
     pub fn add_referred_namespace(&self, referred_namespace_sym: &Symbol) -> ValueRes {
-        match self.get_main_environment() {
+        match self {
             Environment::MainEnvironment(env_val) => {
                 let namespace_sym = self.get_current_namespace_symbol();
                 env_val.add_referred_namespace(&namespace_sym, referred_namespace_sym)
             }
-            Environment::LocalEnvironment(..) => panic!(
-                "get_main_environment() returns LocalEnvironment,\
-		             but by definition should only return MainEnvironment"
-            ),
+            Environment::LocalEnvironment(..) => self
+                .get_main_environment()
+                .add_referred_namespace(referred_namespace_sym),
         }
     }
 
@@ -400,15 +397,16 @@ impl Environment {
         }
     }
 
-    pub fn bind(&self, mbinds: Rc<Value>, exprs: Vec<Value>) -> Result<Environment, LispError> {
+    pub fn bind(&self, mbinds: Rc<Value>, exprs: Vec<Value>) -> Result<Rc<Environment>, LispErr> {
         let new_env = Environment::new_local_environment(Rc::new((*self).clone()));
         match (*mbinds).clone() {
             Value::List(binds, _) | Value::Vector(binds, _) => {
-                if binds.len() != exprs.len() {
-                    return Err(ErrString(
-                        "Length mismatching between binds abd exprs".to_string(),
-                    ));
-                }
+                // if binds.len() != exprs.len() {
+                //     return Err(ErrString(format!(
+                //         "Length mismatching between binds and exprs.\nbinds: {:?}\nexprs: {:?}",
+                //         binds, exprs,
+                //     )));
+                // }
                 for (i, b) in binds.iter().enumerate() {
                     match b {
                         Value::Symbol(s) if s.name() == "&" => {
@@ -434,7 +432,7 @@ impl Environment {
                         }
                     }
                 }
-                Ok(new_env)
+                Ok(Rc::new(new_env))
             }
             _ => Err(ErrString("env_bind binds not List/Vector".to_string())),
         }

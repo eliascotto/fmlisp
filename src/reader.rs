@@ -3,10 +3,10 @@ use std::rc::Rc;
 
 use crate::keyword::Keyword;
 use crate::symbol::Symbol;
-use crate::values::LispError::ErrString;
+use crate::values::LispErr::ErrString;
 use crate::values::{
     error, hash_map_from_kv, hash_map_from_vec, list_from_vec, set_from_vec, vector_from_vec,
-    LispError, ToValue, Value, ValueRes,
+    LispErr, ToValue, Value, ValueRes,
 };
 
 struct Reader {
@@ -15,7 +15,7 @@ struct Reader {
 }
 
 impl Reader {
-    fn next(&mut self) -> Result<String, LispError> {
+    fn next(&mut self) -> Result<String, LispErr> {
         self.pos += 1;
         Ok(self
             .tokens
@@ -25,7 +25,7 @@ impl Reader {
             .to_string())
     }
 
-    fn peek(&self) -> Result<String, LispError> {
+    fn peek(&self) -> Result<String, LispErr> {
         Ok(self
             .tokens
             .get(self.pos)
@@ -37,7 +37,7 @@ impl Reader {
 
 pub fn tokenize(s: &str) -> Vec<String> {
     let re: Regex =
-        Regex::new(r###"[\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]*)"###)
+        Regex::new(r###"[\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]+)"###)
             .unwrap();
 
     let mut res = vec![];
@@ -195,6 +195,7 @@ fn read_form(r: &mut Reader) -> ValueRes {
 
 pub fn read_str(s: String) -> ValueRes {
     let tokens = tokenize(&s);
+
     let mut reader = Reader { tokens, pos: 0 };
     read_form(&mut reader)
 }

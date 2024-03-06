@@ -4,6 +4,7 @@ extern crate itertools;
 extern crate regex;
 extern crate rustyline;
 
+mod errors;
 mod traits;
 #[macro_use]
 mod utils;

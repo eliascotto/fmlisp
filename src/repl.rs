@@ -6,38 +6,39 @@ use std::rc::Rc;
 
 use crate::core;
 use crate::env::Environment;
-use crate::reader;
 use crate::symbol::Symbol;
-use crate::values::LispError;
-use crate::values::{format_error, Value, ValueRes};
-
-fn read(s: &str) -> ValueRes {
-    reader::read_str(s.to_string())
-}
-
-fn print(exp: Value) -> String {
-    exp.pr_str()
-}
+use crate::values::LispErr;
+use crate::values::{format_error, Value};
 
 pub struct Repl {
     environment: Rc<Environment>,
 }
 
 impl Repl {
-    pub fn new(environment: Rc<Environment>) -> Repl {
-        Repl { environment }
+    pub fn new() -> Repl {
+        Repl {
+            environment: Rc::new(Environment::default()),
+        }
     }
 
+    /// Insert a sym-val into the environment
     pub fn insert_str(&self, sym: &str, val: Rc<Value>) {
         self.environment.insert_str(sym, val)
     }
 
-    pub fn rep(&self, s: &str) -> Result<String, LispError> {
-        let ast: Value = read(s)?;
-        let exp: Value = core::eval(ast.clone(), self.environment.clone())?;
-        Ok(print(exp))
+    /// Change or create a new namespace
+    pub fn change_or_create_namespace(&self, sym: &Symbol) {
+        self.environment.change_or_create_namespace(sym);
     }
 
+    // Read Eval Print
+    pub fn rep(&self, s: &str) -> Result<String, LispErr> {
+        let ast: Value = core::read(s)?;
+        let exp: Value = core::eval(ast.clone(), self.environment.clone())?;
+        Ok(core::print(exp))
+    }
+
+    /// Run the REP loop
     pub fn run(&self) {
         let mut rl = DefaultEditor::new().unwrap();
         if rl.load_history("history").is_err() {}
@@ -59,7 +60,7 @@ impl Repl {
                     if line.len() > 0 {
                         match self.rep(&line) {
                             Ok(out) => println!("{}", out),
-                            Err(e) => println!("Error: {}", format_error(e)),
+                            Err(e) => self.handle_error(e),
                         }
                     }
                 }
@@ -72,23 +73,33 @@ impl Repl {
             }
         }
     }
+
+    fn handle_error(&self, e: LispErr) {
+        match e {
+            LispErr::Error(err) => {
+                let e = err.clone();
+                let error = if e.has_type() {
+                    e.get_type()
+                } else {
+                    String::from("Execution error")
+                };
+
+                println!("{}\n{}", error, err.message())
+            }
+            _ => println!("Error: {}", format_error(e)),
+        }
+    }
 }
 
 impl Default for Repl {
-    /// Creates an empty `Repl`.
+    /// Creates a Repl object with all the standard definitions loaded.
     fn default() -> Repl {
-        let env = Environment::default();
+        let repl = Repl::new();
 
-        core::load_core(&env); // Load language core
+        core::load_core(repl.environment.clone()); // Load language core
 
-        env.change_or_create_namespace(&Symbol::new("user")); // Default ns
-
-        let repl = Repl::new(Rc::new(env));
-
-        // TODO - move core definitionw in a .fml file
-        // core.mal: defined using the language itself
         let defs = vec![
-            "(def not (fn [a] (if a false true)))",
+            // "(def not (fn [a] (if a false true)))",
             "(defmacro cond (fn [& xs] (if (> (count xs) 0) (list 'if (first xs) (if (> (count xs) 1) (nth xs 1) (throw \"odd number of forms to cond\")) (cons 'cond (rest (rest xs)))))))",
         ];
         for def in defs {
@@ -591,7 +602,6 @@ mod tests {
         repl.rep("(defmacro unless (fn [pred a b] `(if ~pred ~b ~a)))")
             .unwrap();
         let res = repl.rep("(unless false 7 8)").unwrap(); // if
-        println!("{:?}", res);
         let result_unless: i32 = res.parse().unwrap();
         assert_eq!(result_unless, 7);
         repl.rep("(defmacro unless2 (fn [pred a b] (list 'if (list 'not pred) a b)))")
@@ -793,12 +803,9 @@ mod tests {
     #[test]
     fn test_all_ns() {
         let repl = Repl::default();
-        print_env_mappings!(repl.environment);
         let res = repl.rep("(all-ns)").unwrap();
-        assert!(
-            res == "(#Namespace<user> #Namespace<fmlisp.core>)"
-                || res == "(#Namespace<fmlisp.core> #Namespace<user>)"
-        );
+        assert!(res.contains("#Namespace<user>"));
+        assert!(res.contains("#Namespace<fmlisp.lang>"));
     }
 
     #[test]
@@ -838,6 +845,23 @@ mod tests {
     fn test_number_operations() {
         let repl = Repl::default();
         assert_eq!(repl.rep("(+ 1 2 3)").unwrap(), "6");
+    }
+
+    #[test]
+    fn test_get_keyword_hm() {
+        let repl = Repl::default();
+        assert_eq!(repl.rep("(def x {:a 1})").unwrap(), "#'user/x");
+        assert_eq!(repl.rep("(:a x)").unwrap(), "1");
+        assert_eq!(repl.rep("(:a 1)").unwrap(), "nil");
+        assert_eq!(repl.rep("(:a \"abc\")").unwrap(), "nil");
+        assert_eq!(repl.rep("(:b x)").unwrap(), "nil");
+    }
+
+    #[test]
+    #[should_panic(expected = "'d' symbol not found in this context")]
+    fn test_get_keyword_hm_panic() {
+        let repl = Repl::default();
+        repl.rep("(:a d)").unwrap();
     }
 
     // #[test]

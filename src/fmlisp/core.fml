@@ -2,5 +2,148 @@
       :author "Elia Scotto"}
  fmlisp.core)
 
+(def
+  ^{:arglists '([& items])
+    :doc "Creates a new list containing the items."
+    :added "1.0"}
+  list fmlisp.lang/list)
+
+(def
+  ^{:arglists '([x seq])
+    :doc "Returns a new seq where x is the first element and seq is the rest."
+    :added "1.0"
+    :static true}
+  cons fmlisp.lang/cons)
+
+(def
+  ^{:macro true
+    :added "1.0"}
+  let (fn* let [&form &env & decl] (cons 'let* decl)))
+
+(def
+  ^{:macro true
+    :added "1.0"}
+  loop (fn* loop [&form &env & decl] (cons 'loop* decl)))
+
+(def
+  ^{:macro true
+    :added "1.0"}
+  fn (fn* fn [&form &env & decl]
+          (.withMeta ^clojure.lang.IObj
+           (cons 'fn* decl)
+                     (.meta ^clojure.lang.IMeta &form))))
+
+(def
+  ^{:macro true
+    :added "1.0"}
+  mt (fn* fn [&form &env & decl] (.meta ^clojure.lang.IMeta &form)))
+
+(def
+  ^{:arglists '([coll])
+    :doc "Returns the first item in the collection. Calls seq on its
+    argument. If coll is nil, returns nil."
+    :added "1.0"
+    :static true}
+  first fmlisp.lang/first)
+
+(def
+  ^{:arglists '([coll])
+    :doc "Same as (first (next x))"
+    :added "1.0"}
+  second fmlisp.lang/second)
+
+(def
+  ^{:arglists '([coll])
+    :tag clojure.lang.ISeq
+    :doc "Returns a seq of the items after the first. Calls seq on its
+  argument.  If there are no more items, returns nil."
+    :added "1.0"}
+  next fmlisp.lang/next)
+
+(def
+  ^{:arglists '([coll])
+    :tag clojure.lang.ISeq
+    :doc "Returns a possibly empty seq of the items after the first. Calls seq on its
+  argument."
+    :added "1.0"}
+  rest fmlisp.lang/rest)
+
+(def
+  ^{:arglists '([] [coll] [coll x] [coll x & xs])
+    :doc "conj[oin]. Returns a new collection with the xs
+    'added'. (conj nil item) returns (item).
+    (conj coll) returns coll. (conj) returns [].
+    The 'addition' may happen at different 'places' depending
+    on the concrete type."
+    :added "1.0"}
+  conj fmlisp.lang/conj)
+
+(def
+  ^{:arglists '(^clojure.lang.ISeq [coll])
+    :doc "Returns a seq on the collection. If the collection is
+    empty, returns nil.  (seq nil) returns nil. seq also works on
+    Strings, native Java arrays (of reference types) and any objects
+    that implement Iterable. Note that seqs cache values, thus seq
+    should not be used on any Iterable whose iterator repeatedly
+    returns the same mutable object."
+    :tag clojure.lang.ISeq
+    :added "1.0"
+    :static true}
+  seq fmlisp.lang/seq)
+
+(def
+  ^{:arglists '([^Class c x])
+    :doc "Evaluates x and tests if it is an instance of the class
+    c. Returns true or false"
+    :added "1.0"}
+  instance? fmlisp.lang/instance?)
+
+(def
+  ^{:arglists '([message])
+    :doc "Creates a new error with a message."
+    :added "1.0"}
+  error fmlisp.lang/error)
+
+(def
+  ^{:arglists '([x])
+    :doc "Return true if x is a Character"
+    :added "1.0"
+    :static true}
+  char? fmlisp.lang/char?)
+
+(def
+  ^{:arglists '([x])
+    :doc "Return true if x is a String"
+    :added "1.0"
+    :static true}
+  string? fmlisp.lang/string?)
+
+(def
+  ^{:arglists '([x])
+    :doc "Return true if x implements a HashMap"
+    :added "1.0"
+    :static true}
+  map? fmlisp.lang/map?)
+
+(def
+  ^{:arglists '([x])
+    :doc "Return true if x implements a Vector"
+    :added "1.0"
+    :static true}
+  vector? fmlisp.lang/vector?)
+
+(def
+  ^{:arglists '([coll])
+    :doc "Return the last item in coll"
+    :added "1.0"}
+  last fmlisp.lang/last)
+
+(def
+  ^{:arglists '([coll])
+    :doc "Return a seq of all but the last item in coll, in linear time"
+    :added "1.0"
+    :static true}
+  butlast fmlisp.lang/butlast)
+
 (def not
   (fn [a] (if a false true)))

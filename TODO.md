@@ -1,12 +1,12 @@
 ## TODO
 
-- `recur` (probably useless if we do full TCO)
-- Move delcaration of lang into `fmlisp.lang`
-- Initially load from `core.fml`
-- Start to implement language from `core.fml`
+- `is-macro` meta saved as data
+- Write wrapper for lang functions with doc into fmlisp.core
 - `defn`
 - `refer` function
 - `require` with file loading
+- `doc`
+- Proc Macro to define Rust functions as plugins and load them into FMLisp at the startup
 - Start UI with GPUI
 - Add ns exploring REPL functions as `ns-intern` (in a REPL namespace?)
 - Lazy evaluation
@@ -22,28 +22,31 @@
 - REPL readline input only if parentesis are fully closed
 
 ## Features
-- Condition system with REPL block (enable/disable)
+
+- Condition system with REPL block (enable/disable) and RESTARTS
+- `ignore-errors` from CL
 - Lazy evaluation
 - Fast lists structures
 - Immutable data structures
 - Better stacktrace and errors
-    - error show on line like rust
+  - error show on line like rust
 - Static typing?? - if it's worth it
 
 ## Specials Forms
+
 - &
 - monitor-exit
-- case*
+- case\*
 - try/catch
-- reify*
+- reify\*
 - finally
-- loop*
-- letfn*
-- clojure.core/import*
+- loop\*
+- letfn\*
+- clojure.core/import\*
 - new
-- deftype*
-- let*
-- fn*
+- deftype\*
+- let\*
+- fn\*
 - recur
 - set!
 - .

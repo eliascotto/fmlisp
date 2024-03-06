@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use crate::symbol::Symbol;
-use crate::values::{LispError, Value};
+use crate::values::{LispErr, Value};
 use crate::values::{ToValue, ValueRes};
 use crate::var::Var;
 
@@ -57,29 +57,39 @@ impl Namespace {
             panic!("Can't insert namespace-qualified symbol, {}", sym);
         }
 
-        if !self.contains(sym) {
-            match &*val {
-                Value::Var(ref var) => {
-                    // Insert a copy of the Var into the current namespace
-                    self.mappings
-                        .borrow_mut()
-                        .insert(sym.unqualified(), var.clone());
-                }
-                _ => panic!("Expected Var for symbol {}", sym),
+        // We replace the Var in the Namespace mapping
+        match &*val {
+            Value::Var(ref var) => {
+                // Insert a copy of the Var into the current namespace
+                self.mappings
+                    .borrow_mut()
+                    .insert(sym.unqualified(), var.clone());
             }
-        } else {
-            let mappings = self.mappings.borrow_mut();
-            let var = mappings.get(&sym.unqualified()).unwrap();
-            let new_val = match &*val {
-                // If insert receives a Var, the update should just
-                // update the content of the Var already in the namespace
-                Value::Var(ref var) => var.val.borrow().clone(),
-                // Otherwise, is just a normal Value
-                _ => val,
-            };
-            var.bind_value(new_val);
-            var.with_meta(Rc::new(sym.meta()));
+            _ => panic!("Expected Var for symbol {}", sym),
         }
+        // if !self.contains(sym) {
+        //     match &*val {
+        //         Value::Var(ref var) => {
+        //             // Insert a copy of the Var into the current namespace
+        //             self.mappings
+        //                 .borrow_mut()
+        //                 .insert(sym.unqualified(), var.clone());
+        //         }
+        //         _ => panic!("Expected Var for symbol {}", sym),
+        //     }
+        // } else {
+        //     let mappings = self.mappings.borrow_mut();
+        //     let var = mappings.get(&sym.unqualified()).unwrap();
+        //     let new_val = match &*val {
+        //         // If insert receives a Var, the update should just
+        //         // update the content of the Var already in the namespace
+        //         Value::Var(ref var) => var.val.borrow().clone(),
+        //         // Otherwise, is just a normal Value
+        //         _ => val,
+        //     };
+        //     var.bind_value(new_val);
+        //     var.with_meta(Rc::new(sym.meta()));
+        // }
     }
 
     pub fn remove(&self, sym: &Symbol) {
@@ -99,13 +109,10 @@ impl Namespace {
     }
 
     // Return a Value or raise an error
-    pub fn get(&self, sym: &Symbol) -> Result<Rc<Value>, LispError> {
+    pub fn get(&self, sym: &Symbol) -> Result<Rc<Value>, LispErr> {
         match self.try_get(sym) {
             Some(val) => Ok(val),
-            None => Err(LispError::ErrString(format!(
-                "Undefined symbol {}",
-                sym.name
-            ))),
+            None => Err(LispErr::ErrString(format!("Undefined symbol {}", sym.name))),
         }
     }
 
@@ -123,12 +130,15 @@ impl Namespace {
             .collect()
     }
 
-    /// Returns an hashmap of public symbols-var
+    /// Returns an hashmap of public symbols-var.
+    /// Used to refer other namespaces.
     fn get_public_mappings(&self) -> HashMap<Symbol, Var> {
         self.mappings
             .borrow()
             .iter()
-            .filter(|(_k, v)| !v.is_private())
+            // Filter out all Var that are private or that don't
+            // belong to the current namespace
+            .filter(|(_k, v)| !v.is_private() && v.ns == self.name)
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
@@ -389,7 +399,7 @@ impl Namespaces {
     ) -> ValueRes {
         if let Some(ref_ns) = self.get_namespace(&referred_namespace_sym.unqualified()) {
             match self.0.borrow().get(namespace_sym) {
-                Some(curr_ns) => curr_ns.add_referred_namespace(&ref_ns),
+                Some(ns) => ns.add_referred_namespace(&ref_ns),
                 None => panic!("Namespace {} not found!", namespace_sym),
             }
         } else {

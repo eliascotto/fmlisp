@@ -7,10 +7,10 @@ use std::rc::Rc;
 
 use crate::core;
 use crate::env::Environment;
+use crate::errors;
 use crate::keyword::Keyword;
 use crate::namespaces::Namespace;
 use crate::symbol::Symbol;
-use crate::values::LispError::{ErrString, ErrValue};
 use crate::var::Var;
 
 #[derive(Debug, Clone, Default)]
@@ -33,18 +33,18 @@ pub enum Value {
     Set(Rc<HashSet<Value>>, Option<HashMap<Value, Value>>),
 
     // FUNCTIONS
-    // Internal fmlisp functions
+    // Internal fmlisp functions defined into /lang
     Func(
         fn(ExprArgs, Rc<Environment>) -> ValueRes,
         Option<HashMap<Value, Value>>,
     ),
-    // Internal Macros
+    // Internal Macros functions
     Macro(
         fn(ExprArgs, Rc<Environment>) -> ValueRes,
         Option<HashMap<Value, Value>>,
     ),
-    // All Lisp functions
-    DefinedFunc {
+    // Lambda functions
+    Lambda {
         ast: Rc<Value>,
         env: Rc<Environment>,
         params: Rc<Value>,
@@ -55,26 +55,50 @@ pub enum Value {
     // LISP
     Atom(Rc<RefCell<Value>>),
     Namespace(RefCell<Rc<Namespace>>),
+
+    // Error
+    Error(LispErr),
 }
 
-#[derive(Debug)]
-pub enum LispError {
+#[derive(Debug, Clone)]
+pub enum LispErr {
     ErrString(String),
-    ErrValue(Value),
+    ErrValue(Box<Value>),
+    Error(errors::Error),
+}
+
+impl Hash for LispErr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            LispErr::ErrString(s) => s.hash(state),
+            LispErr::ErrValue(v) => v.hash(state),
+            LispErr::Error(e) => e.hash(state),
+        }
+    }
+}
+
+/// Return a LispError object formatted to String
+pub fn format_error(e: LispErr) -> String {
+    match e {
+        LispErr::ErrString(s) => s.clone(),
+        LispErr::ErrValue(mv) => mv.pr_str(),
+        LispErr::Error(e) => e.to_string(),
+    }
 }
 
 pub type ExprArgs = Vec<Value>;
-pub type ValueRes = Result<Value, LispError>;
+pub type ValueRes = Result<Value, LispErr>;
 
+/// Returns a new error from a &str
 pub fn error(s: &str) -> ValueRes {
-    Err(ErrString(s.to_string()))
+    Err(LispErr::ErrString(s.to_string()))
 }
 
-pub fn format_error(e: LispError) -> String {
-    match e {
-        ErrString(s) => s.clone(),
-        ErrValue(mv) => mv.pr_str(),
-    }
+/// /// Returns a new ArgumentError from a &str
+pub fn arg_error(s: &str) -> ValueRes {
+    let mut err = errors::Error::new_from_str(String::from(s));
+    err.set_type("Argument");
+    Err(LispErr::Error(err))
 }
 
 /// Return a new Error from string received as params.
@@ -84,7 +108,7 @@ pub fn format_error(e: LispError) -> String {
 /// ```
 macro_rules! error {
     ($msg:expr) => {
-        Err(LispError::ErrString($msg.to_string()))
+        Err(LispErr::ErrString($msg.to_string()))
     };
 }
 
@@ -109,7 +133,7 @@ impl PartialEq for Value {
             (Value::Set(ref a, _), Value::Set(ref b, _)) => a == b,
             (Value::Func(ref fa, _), Value::Func(ref fb, _)) => fa == fb,
             (Value::Macro(ref ma, _), Value::Macro(ref mb, _)) => ma == mb,
-            (Value::DefinedFunc { .. }, Value::DefinedFunc { .. }) => false,
+            (Value::Lambda { .. }, Value::Lambda { .. }) => false,
             (Value::Namespace(ref na), Value::Namespace(ref nb)) => na == nb,
             _ => false,
         }
@@ -156,7 +180,7 @@ impl Hash for Value {
             Value::Macro(_, _) => {
                 // Not hashing function pointers
             }
-            Value::DefinedFunc {
+            Value::Lambda {
                 ast,
                 env: _,
                 params,
@@ -172,6 +196,9 @@ impl Hash for Value {
             Value::Atom(atom) => {
                 // Not hashing atom content
                 atom.borrow().hash(state);
+            }
+            Value::Error(err) => {
+                err.hash(state);
             }
         }
     }
@@ -214,11 +241,12 @@ impl fmt::Display for Value {
             }
             Value::Func(f, _) => format!("#<fn {:?}>", f),
             Value::Macro(f, _) => format!("#<macro {:?}>", f),
-            Value::DefinedFunc { ast, params, .. } => {
+            Value::Lambda { ast, params, .. } => {
                 format!("(fn {} {})", params.to_string(), ast.to_string())
             }
             Value::Namespace(ns) => ns.borrow().to_string(),
             Value::Atom(a) => format!("#atom {{:val {}}}", a.borrow().to_string()),
+            Value::Error(err) => format_error(err.clone()),
         };
         write!(f, "{}", s)
     }
@@ -269,11 +297,12 @@ impl Value {
             }
             Value::Func(f, _) => format!("#<fn {:?}>", f),
             Value::Macro(f, _) => format!("#<macro {:?}>", f),
-            Value::DefinedFunc {
+            Value::Lambda {
                 ast: a, params: p, ..
             } => format!("(fn {} {})", p.pr_str(), a.pr_str()),
             Value::Namespace(ns) => ns.borrow().to_string(),
             Value::Atom(a) => format!("#atom {{:val {}}}", a.borrow().pr_str()),
+            Value::Error(err) => format_error(err.clone()),
         }
     }
 
@@ -294,23 +323,24 @@ impl Value {
             Value::Set(_, _) => "Set",
             Value::Func(_, _) => "Function",
             Value::Macro(_, _) => "Function",
-            Value::DefinedFunc { .. } => "Function",
+            Value::Lambda { .. } => "Function",
             Value::Namespace(_) => "Namespace",
             Value::Atom(_) => "Atom",
+            Value::Error(err) => "Error",
         }
     }
 
     pub fn apply(&self, args: ExprArgs, env: Rc<Environment>) -> ValueRes {
         match *self {
             Value::Func(f, _) | Value::Macro(f, _) => f(args, env.clone()),
-            Value::DefinedFunc {
+            Value::Lambda {
                 ref ast,
                 ref env,
                 ref params,
                 ..
             } => {
                 let a = &**ast;
-                let fn_env = Rc::new(env.bind(params.clone(), args.clone())?);
+                let fn_env = env.bind(params.clone(), args.clone())?;
                 Ok(core::eval(a.clone(), fn_env)?)
             }
             _ => error("Attempt to call a non-function"),
@@ -397,7 +427,7 @@ impl Value {
             | Value::Set(_, meta)
             | Value::HashMap(_, meta)
             | Value::Func(_, meta)
-            | Value::DefinedFunc { meta, .. } => match meta {
+            | Value::Lambda { meta, .. } => match meta {
                 Some(m) => Some((*m).clone()),
                 None => None,
             },
@@ -452,7 +482,7 @@ impl Value {
             | Value::Set(_, ref mut meta)
             | Value::HashMap(_, ref mut meta)
             | Value::Func(_, ref mut meta)
-            | Value::DefinedFunc { ref mut meta, .. } => {
+            | Value::Lambda { ref mut meta, .. } => {
                 let m = match process_meta(new_meta) {
                     Some(meta) => meta,
                     _ => {
@@ -528,16 +558,6 @@ impl Value {
                 "to_chars_list not supported on this type: {}",
                 self.as_str()
             )),
-        }
-    }
-
-    pub fn extract_var(&self) -> Result<Var, LispError> {
-        match self {
-            Value::Var(ref var) => Ok(var.clone()),
-            _ => Err(LispError::ErrString(format!(
-                "extract not supported on this type: {}",
-                self.as_str()
-            ))),
         }
     }
 }
@@ -890,14 +910,14 @@ mod tests {
 
     #[test]
     fn test_format_error_string() {
-        let err = ErrString("Some error message".to_string());
+        let err = LispErr::ErrString("Some error message".to_string());
         assert_eq!(format_error(err), "Some error message");
     }
 
     #[test]
     fn test_format_error_malvalue() {
         let err_value = Value::Integer(42);
-        let err = ErrValue(err_value);
+        let err = LispErr::ErrValue(Box::new(err_value));
         // Assuming pr_str() returns a string representation of the Value
         assert_eq!(format_error(err), "42"); // Check the string representation
     }

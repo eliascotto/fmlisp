@@ -3,8 +3,7 @@ use crate::keyword::Keyword;
 use crate::symbol::Symbol;
 use crate::utils::IsOdd;
 use crate::values::{
-    self, _assoc, _dissoc, error, func, hash_map_from_vec, list_from_vec, macro_fn, set_from_vec,
-    vector_from_vec, ExprArgs, LispError, ToValue, Value, ValueRes,
+    error, func, list_from_vec, macro_fn, ExprArgs, LispErr, ToValue, Value, ValueRes,
 };
 use if_chain::if_chain;
 use itertools::Itertools;
@@ -135,6 +134,7 @@ fn refer(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     }
 
     let namespace = args.get(0).unwrap();
+    // Support special keyword
     if args.len() > 1 {
         for (filter_key, filter_val) in args.iter().skip(1).tuples() {
             // To avoid ungodly nesting
@@ -162,6 +162,7 @@ fn refer(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
             }
         }
     } else {
+        // Import entire namespace
         if let Value::Symbol(ns) = namespace {
             env.add_referred_namespace(ns)?;
         }
