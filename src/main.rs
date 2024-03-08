@@ -1,3 +1,4 @@
+extern crate dotenvy;
 extern crate fnv;
 extern crate if_chain;
 extern crate itertools;
@@ -24,9 +25,17 @@ mod lang;
 mod namespaces;
 mod reader;
 mod repl;
+
 use crate::repl::Repl;
+use dotenvy::dotenv;
 
 fn main() {
+    // Loading .env
+    match dotenv() {
+        Ok(_) => {}
+        Err(_) => println!(".env file not found"),
+    }
+
     let repl = Repl::default();
 
     let mut args = std::env::args();

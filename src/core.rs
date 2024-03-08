@@ -16,12 +16,38 @@ use crate::values::LispErr::{self};
 use crate::values::{format_error, ExprArgs, ToValue, Value, ValueRes};
 use crate::var::Var;
 
+/// Read and eval a file
+fn load_file(path: &str, env: Rc<Environment>) {
+    match lang::core::load_file(&String::from(path), env.clone()) {
+        Ok(_) => {}
+        Err(e) => match e.clone() {
+            LispErr::Error(err) => {
+                let prefix = if let Some(details) = err.details() {
+                    format!("Error {} at {}", details, path)
+                } else {
+                    format!("Error at {}", path)
+                };
+                if err.has_trace() {
+                    eprintln!(
+                        "{}\n{}\nBacktrace:\n{}",
+                        prefix,
+                        format_error(e),
+                        err.fmt_trace(false)
+                    )
+                } else {
+                    eprintln!("{}\n{}", prefix, format_error(e))
+                }
+            }
+            _ => eprintln!("Error at {}\n{}", path, format_error(e)),
+        },
+    }
+}
+
 /// Load the core functions and symbols into the namespace
 pub fn load_core(env: Rc<Environment>) {
     env.change_or_create_namespace(&sym!("fmlisp.lang"));
 
     // Loading internal definitions
-
     for (k, v) in lang::core::internal_symbols(&env) {
         env.insert_var(Symbol::new(k), v.to_rc_value());
     }
@@ -40,11 +66,8 @@ pub fn load_core(env: Rc<Environment>) {
         }
     }
 
-    // Now loading definitions directly from FMLisp files
-    match lang::core::load_file(&String::from("src/fmlisp/core.fml"), env.clone()) {
-        Err(e) => eprintln!("{}", format_error(e)),
-        Ok(_) => {}
-    }
+    // Load language file
+    load_file("src/fmlisp/core.fml", env.clone());
 
     // Change to default user namespace
     env.change_or_create_namespace(&Symbol::new("user"));
@@ -127,7 +150,18 @@ fn macroexpand(mut ast: Value, env: Rc<Environment>) -> (bool, Result<Rc<Value>,
     while let Some((mf, args)) = is_macro_call(ast.clone(), env.clone()) {
         ast = match mf.apply(args, env.clone()) {
             Ok(a) => a,
-            Err(e) => return (false, Err(e)),
+            Err(e) => {
+                match e.clone() {
+                    // Load trace in case of apply raised an error
+                    LispErr::Error(mut err) => {
+                        err.set_type("Syntax");
+                        err.set_details("macroexpanding");
+                        err.add_trace(ast.clone());
+                        return (false, Err(LispErr::Error(err)));
+                    }
+                    _ => return (false, Err(e)),
+                }
+            }
         };
         was_expanded = true;
     }
@@ -194,32 +228,42 @@ fn get_body_definitions(args: Vec<Value>) -> Rc<Value> {
     }
 }
 
-/// Returns the index in the params array for Value::Lambda, which has length `arity`,
-/// or None.
-fn find_params_index_by_arity(params: &[Rc<Value>], arity: usize) -> Option<usize> {
-    for (index, param) in params.iter().enumerate() {
-        if let Value::Vector(v, _) = &**param {
-            if v.len() == arity {
-                return Some(index);
+fn calc_arity(params: Rc<Vec<Value>>) -> usize {
+    let mut len: usize = 0;
+    for p in params.iter() {
+        match p {
+            Value::Symbol(sym) => {
+                if sym.name() == "&" {
+                    // If & let's just use the max value available
+                    return usize::MAX;
+                }
+                len += 1;
             }
+            _ => panic!(
+                "Expected a vector of symbols for arguments, found {:?}",
+                params
+            ),
         }
     }
-    None
+    len
 }
 
 // Returns a tuple ast-params based on the function's arity needed
-pub fn find_ast_params_by_arity(
+pub fn find_ast_and_params_by_arity(
     ast: &[Rc<Value>],
     params: &[Rc<Value>],
     arity: usize,
 ) -> Option<(Rc<Value>, Rc<Value>)> {
     // Get the index of the correct arity for params.
-    // Then use the corresponding params and ast for executing the Lambda
-    if let Some(idx) = find_params_index_by_arity(params, arity) {
-        Some((ast[idx].clone(), params[idx].clone()))
-    } else {
-        None
+    // Then use the corresponding params and ast for executing the Lambda.
+    for (index, param) in params.iter().enumerate() {
+        if let Value::Vector(v, _) = &**param {
+            if calc_arity(v.clone()) >= arity {
+                return Some((ast[index].clone(), params[index].clone()));
+            }
+        }
     }
+    None
 }
 
 pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispErr> {
@@ -668,14 +712,33 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                         eval(rc_arg.clone(), mut_env.borrow().clone()).unwrap()
                                     })
                                     .collect::<Vec<Value>>();
-                                let ret = f.apply(evaled_args, mut_env.borrow().clone())?;
-                                Ok(ret.to_rc_value())
+
+                                match f.apply(evaled_args, mut_env.borrow().clone()) {
+                                    Ok(ret) => Ok(ret.to_rc_value()),
+                                    Err(e) => match e.clone() {
+                                        // Load trace in case of apply raised an error
+                                        LispErr::Error(mut err) => {
+                                            err.add_trace(ast.clone());
+                                            Err(e)
+                                        }
+                                        _ => Err(e),
+                                    },
+                                }
                             }
                             // An internal macro, is a function which the parameter are not evaluated,
                             // but passed to the function as is (keeping symbols).
                             Value::Macro(_, _) => {
-                                let ret = f.apply(args.clone(), mut_env.borrow().clone())?;
-                                Ok(ret.to_rc_value())
+                                match f.apply(args.clone(), mut_env.borrow().clone()) {
+                                    Ok(ret) => Ok(ret.to_rc_value()),
+                                    Err(e) => match e.clone() {
+                                        // Load trace in case of apply raised an error
+                                        LispErr::Error(mut err) => {
+                                            err.add_trace(ast.clone());
+                                            Err(e)
+                                        }
+                                        _ => Err(e),
+                                    },
+                                }
                             }
                             // Lambda function defined by the user
                             Value::Lambda {
@@ -694,7 +757,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
 
                                 let args_count = bind_args.len();
                                 if let Some((p, a)) =
-                                    find_ast_params_by_arity(lambda_ast, params, args_count)
+                                    find_ast_and_params_by_arity(lambda_ast, params, args_count)
                                 {
                                     // Now bind the arguments to the lambda params in a new env
                                     let new_env = menv.bind(p, bind_args)?;

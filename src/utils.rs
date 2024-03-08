@@ -1,3 +1,5 @@
+use std::env;
+
 // Just a little sugar around having to write 'num % 2 == 0'
 pub trait IsEven {
     fn is_even(&self) -> bool;
@@ -32,4 +34,19 @@ macro_rules! print_ns_mappings {
             crate::values::Value::HashMap(std::rc::Rc::new($ns.get_mappings_as_values()), None);
         println!("NS: {}\n{}", $ns, hm);
     }};
+}
+
+pub fn is_debug_env() -> bool {
+    match env::var("ENV") {
+        Ok(s) => s == "debug",
+        Err(_) => false,
+    }
+}
+
+macro_rules! if_debug {
+    ($body:block) => {
+        if crate::utils::is_debug_env() {
+            $body
+        }
+    };
 }

@@ -64,6 +64,7 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 ## Future
 
 - Add `&form &env` to `defmacro` internal `defn` arguments
+- Add `set!` to force setting a var, overriding the immutability
 
 ## General
 

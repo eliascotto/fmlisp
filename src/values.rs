@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -84,7 +85,7 @@ pub fn format_error(e: LispErr) -> String {
     match e {
         LispErr::ErrString(s) => s.clone(),
         LispErr::ErrValue(mv) => mv.pr_str(),
-        LispErr::Error(e) => e.to_string(),
+        LispErr::Error(e) => e.message(),
     }
 }
 
@@ -115,9 +116,11 @@ macro_rules! error {
 }
 
 macro_rules! argument_error {
-    ($msg:expr) => {
-        Err(LispErr::Error($msg.to_string()))
-    };
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        let err = errors::Error::new_with_type(msg, "Argument");
+        Err(LispErr::Error(err))
+    }};
 }
 
 impl Eq for Value {}
@@ -346,7 +349,7 @@ impl Value {
             Value::Lambda { .. } => "Function",
             Value::Namespace(_) => "Namespace",
             Value::Atom(_) => "Atom",
-            Value::Error(err) => "Error",
+            Value::Error(_) => "Error",
         }
     }
 
@@ -361,14 +364,15 @@ impl Value {
             } => {
                 let ast_a = &**ast;
                 let arity = args.len();
-                if let Some((a, p)) = core::find_ast_params_by_arity(ast_a, params, arity) {
+                if let Some((a, p)) = core::find_ast_and_params_by_arity(ast_a, params, arity) {
                     let fn_env = env.bind(p, args.clone())?;
                     return Ok(core::eval((*a).clone(), fn_env)?);
                 } // else
-                error!(format!(
+                argument_error!(
                     "Wrong number of arguments ({}) passed to function {}",
-                    arity, self
-                ))
+                    arity,
+                    self
+                )
             }
             _ => error("Attempt to call a non-function"),
         }

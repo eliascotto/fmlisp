@@ -1,4 +1,5 @@
 use crate::values::{self, Value};
+use std::borrow::BorrowMut;
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 
@@ -8,7 +9,8 @@ pub trait Throwable: Debug {}
 pub struct Error {
     message: Box<Value>,
     trace: Vec<Box<Value>>,
-    kind: Option<String>,
+    kind: Option<String>,    // type
+    details: Option<String>, // extra error message details
 }
 
 impl Error {
@@ -17,14 +19,16 @@ impl Error {
             message: Box::new(msg),
             trace: vec![],
             kind: None,
+            details: None,
         }
     }
 
-    pub fn new_with_type(msg: String, kind: String) -> Error {
+    pub fn new_with_type(msg: String, kind: &str) -> Error {
         Error {
             message: Box::new(Value::Str(msg)),
             trace: vec![],
-            kind: Some(kind),
+            kind: Some(String::from(kind)),
+            details: None,
         }
     }
 
@@ -38,6 +42,19 @@ impl Error {
         } else {
             panic!("Value is not of type Value::Str");
         }
+    }
+
+    pub fn set_message(&mut self, msg: &str) {
+        let val = Value::Str(String::from(msg));
+        self.message = Box::new(val);
+    }
+
+    pub fn details(&self) -> Option<String> {
+        self.details.clone()
+    }
+
+    pub fn set_details(&mut self, msg: &str) {
+        self.details = Some(String::from(msg));
     }
 
     pub fn has_type(&self) -> bool {
@@ -59,7 +76,7 @@ impl Error {
         values::LispErr::Error(self.clone())
     }
 
-    fn trace_to_vec(&self) -> Vec<String> {
+    pub fn trace_to_vec(&self) -> Vec<String> {
         self.trace
             .iter()
             .map(|t| {
@@ -70,6 +87,34 @@ impl Error {
                 }
             })
             .collect::<Vec<String>>()
+    }
+
+    pub fn add_trace(&mut self, t: Value) {
+        self.trace.push(Box::new(t));
+    }
+
+    pub fn has_trace(&self) -> bool {
+        !self.trace.is_empty()
+    }
+
+    pub fn trace_len(&self) -> usize {
+        self.trace.len()
+    }
+
+    pub fn fmt_trace(&self, enumerate: bool) -> String {
+        let v = self
+            .trace
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                if enumerate {
+                    format!("{}: {}", i, t.pr_str())
+                } else {
+                    format!("{}", t.pr_str())
+                }
+            })
+            .collect::<Vec<String>>();
+        v.join("\n")
     }
 }
 
