@@ -20,6 +20,14 @@ impl Error {
         }
     }
 
+    pub fn new_with_type(msg: String, kind: String) -> Error {
+        Error {
+            message: Box::new(Value::Str(msg)),
+            trace: vec![],
+            kind: Some(kind),
+        }
+    }
+
     pub fn new_from_str(msg: String) -> Error {
         Error::new(Value::Str(msg))
     }

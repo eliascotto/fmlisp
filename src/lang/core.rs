@@ -12,7 +12,7 @@ use crate::symbol::Symbol;
 use crate::values::LispErr::ErrValue;
 use crate::values::{
     self, _assoc, _dissoc, error, func, hash_map_from_vec, list_from_vec, macro_fn, set_from_vec,
-    vector_from_vec, ExprArgs, LispErr, Value, ValueRes,
+    vector_from_vec, ExprArgs, LispErr, ToValue, Value, ValueRes,
 };
 
 /// Macro that receive an Integer and eval the expr.
@@ -320,6 +320,34 @@ fn butlast(a: ExprArgs, env: Rc<Environment>) -> ValueRes {
     }
 }
 
+fn subvec(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() < 2 || args.len() > 3 {
+        return error("Wrong number of arguments passed to subvec. Expecting 2 or 3");
+    }
+    match args[0].clone() {
+        Value::Vector(seq, _) => match args[1].clone() {
+            Value::Integer(start) => {
+                let end = match args.get(2) {
+                    Some(n) => match n {
+                        Value::Integer(end) => Some(end),
+                        _ => return error("subvec index should be integer"),
+                    },
+                    None => None,
+                };
+
+                let new_vec: Vec<Value> = if let Some(e) = end {
+                    seq[(start as usize)..(e.clone() as usize)].to_vec()
+                } else {
+                    seq[start as usize..].to_vec()
+                };
+                Ok(vector_from_vec(new_vec))
+            }
+            _ => error("subvec index should be integer"),
+        },
+        _ => error("subvec called with non-vector"),
+    }
+}
+
 fn apply(a: ExprArgs, env: Rc<Environment>) -> ValueRes {
     match a[a.len() - 1] {
         Value::List(ref v, _) | Value::Vector(ref v, _) => {
@@ -352,6 +380,13 @@ fn symbol(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
         Value::Str(ref s) => Ok(Value::Symbol(sym!(s))),
         Value::Symbol(_) => Ok(a[0].clone()),
         _ => error("Illegal symbol call"),
+    }
+}
+
+fn get_name(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    match a[0] {
+        Value::Symbol(ref sym) => Ok(sym.name().to_value()),
+        _ => error("get-name called with non-symbol"),
     }
 }
 
@@ -598,11 +633,11 @@ fn atom(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     Ok(values::atom(&args[0]))
 }
 
-fn instance_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+fn is_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if args.len() != 2 {
-        return error("Wrong number of arguments passed to instance?. Expecting 2");
+        return error("Wrong number of arguments passed to is?. Expecting 2");
     }
-    let is_instance = match args[0] {
+    let is = match args[0] {
         Value::Symbol(ref sym) => match args[1] {
             Value::Nil => sym.name == "Nil",
             Value::Integer(_) => sym.name == "Integer",
@@ -624,9 +659,9 @@ fn instance_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             Value::Atom(_) => sym.name == "Atom",
             Value::Error(_) => sym.name == "Error",
         },
-        _ => return error!("instance? requires symbol as first parameter"),
+        _ => return error!("is? requires symbol as first parameter"),
     };
-    Ok(Value::Bool(is_instance))
+    Ok(Value::Bool(is))
 }
 
 fn public_q(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
@@ -785,6 +820,11 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("reset!", func(reset_bang)),
         ("swap!", func(swap_bang)),
         // COLLECTIONS
+        (
+            "sequential?",
+            func(fn_is_type!(Value::List(_, _), Value::Vector(_, _))),
+        ),
+        ("vector", func(|a, _| Ok(vector_from_vec(a)))),
         ("vector?", func(fn_is_type!(Value::Vector(_, _)))),
         ("cons", func(cons)),
         ("concat", func(concat)),
@@ -797,23 +837,22 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("next", func(next)),
         ("last", func(last)),
         ("butlast", func(butlast)),
+        ("subvec", func(subvec)),
         ("apply", func(apply)),
         ("map", func(map)),
         ("nil?", func(fn_is_type!(Value::Nil))),
         ("true?", func(fn_is_type!(Value::Bool(true)))),
         ("false?", func(fn_is_type!(Value::Bool(false)))),
+        // Symbols
         ("symbol?", func(fn_is_type!(Value::Symbol(_)))),
         ("symbol", func(symbol)),
+        ("get-name", func(get_name)),
+        // Keyword
         ("keyword", func(keyword)),
         ("keyword?", func(fn_is_type!(Value::Keyword(_)))),
-        ("vector", func(|a, _| Ok(vector_from_vec(a)))),
-        ("vector?", func(fn_is_type!(Value::Vector(_, _)))),
+        // Set
         ("set", func(set)),
         ("set?", func(fn_is_type!(Value::Set(_, _)))),
-        (
-            "sequential?",
-            func(fn_is_type!(Value::List(_, _), Value::Vector(_, _))),
-        ),
         // HASHMAP
         ("hash-map", func(|a, _| hash_map_from_vec(a))),
         ("map?", func(fn_is_type!(Value::HashMap(_, _)))),
@@ -838,7 +877,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("with-meta", func(with_meta)),
         // GENERICS
         ("type", func(type_fn)),
-        ("instance?", func(instance_q)),
+        ("is?", func(is_q)),
         ("public?", macro_fn(public_q)),
         ("private?", macro_fn(private_q)),
         ("intern", func(intern)),

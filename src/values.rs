@@ -34,6 +34,8 @@ pub enum Value {
 
     // FUNCTIONS
     // Internal fmlisp functions defined into /lang
+    //
+    // TODO refactoring with fields: func, meta, is_macro, name
     Func(
         fn(ExprArgs, Rc<Environment>) -> ValueRes,
         Option<HashMap<Value, Value>>,
@@ -45,9 +47,9 @@ pub enum Value {
     ),
     // Lambda functions
     Lambda {
-        ast: Rc<Value>,
+        ast: Vec<Rc<Value>>,
         env: Rc<Environment>,
-        params: Rc<Value>,
+        params: Vec<Rc<Value>>,
         is_macro: bool,
         meta: Option<HashMap<Value, Value>>,
     },
@@ -109,6 +111,12 @@ pub fn arg_error(s: &str) -> ValueRes {
 macro_rules! error {
     ($msg:expr) => {
         Err(LispErr::ErrString($msg.to_string()))
+    };
+}
+
+macro_rules! argument_error {
+    ($msg:expr) => {
+        Err(LispErr::Error($msg.to_string()))
     };
 }
 
@@ -242,7 +250,15 @@ impl fmt::Display for Value {
             Value::Func(f, _) => format!("#<fn {:?}>", f),
             Value::Macro(f, _) => format!("#<macro {:?}>", f),
             Value::Lambda { ast, params, .. } => {
-                format!("(fn {} {})", params.to_string(), ast.to_string())
+                let mut overloads = vec![];
+                for idx in 0..params.len() {
+                    overloads.push(format!(
+                        "({} {})",
+                        params[idx].to_string(),
+                        ast[idx].to_string()
+                    ))
+                }
+                format!("(fn {})", overloads.join("\n"))
             }
             Value::Namespace(ns) => ns.borrow().to_string(),
             Value::Atom(a) => format!("#atom {{:val {}}}", a.borrow().to_string()),
@@ -297,9 +313,13 @@ impl Value {
             }
             Value::Func(f, _) => format!("#<fn {:?}>", f),
             Value::Macro(f, _) => format!("#<macro {:?}>", f),
-            Value::Lambda {
-                ast: a, params: p, ..
-            } => format!("(fn {} {})", p.pr_str(), a.pr_str()),
+            Value::Lambda { ast, params, .. } => {
+                let mut overloads = vec![];
+                for idx in 0..params.len() {
+                    overloads.push(format!("({} {})", params[idx].pr_str(), ast[idx].pr_str()))
+                }
+                format!("(fn {})", overloads.join("\n"))
+            }
             Value::Namespace(ns) => ns.borrow().to_string(),
             Value::Atom(a) => format!("#atom {{:val {}}}", a.borrow().pr_str()),
             Value::Error(err) => format_error(err.clone()),
@@ -339,9 +359,16 @@ impl Value {
                 ref params,
                 ..
             } => {
-                let a = &**ast;
-                let fn_env = env.bind(params.clone(), args.clone())?;
-                Ok(core::eval(a.clone(), fn_env)?)
+                let ast_a = &**ast;
+                let arity = args.len();
+                if let Some((a, p)) = core::find_ast_params_by_arity(ast_a, params, arity) {
+                    let fn_env = env.bind(p, args.clone())?;
+                    return Ok(core::eval((*a).clone(), fn_env)?);
+                } // else
+                error!(format!(
+                    "Wrong number of arguments ({}) passed to function {}",
+                    arity, self
+                ))
             }
             _ => error("Attempt to call a non-function"),
         }
@@ -602,6 +629,12 @@ impl ToValue for bool {
 impl ToValue for std::string::String {
     fn to_value(&self) -> Value {
         Value::Str(self.clone())
+    }
+}
+
+impl ToValue for &str {
+    fn to_value(&self) -> Value {
+        Value::Str(std::string::String::from(self.clone()))
     }
 }
 

@@ -3,6 +3,12 @@
  fmlisp.core)
 
 (def
+  ^{:arglists '([message])
+    :doc "Creates a new error with `message` as cause."
+    :added "1.0"}
+  error fmlisp.lang/error)
+
+(def
   ^{:arglists '([& items])
     :doc "Creates a new list containing the items."
     :added "1.0"}
@@ -15,33 +21,27 @@
     :static true}
   cons fmlisp.lang/cons)
 
-(def
-  ^{:macro true
-    :added "1.0"}
-  let (fn* let [&form &env & decl] (cons 'let* decl)))
+;; ========= Temp macros
 
 (def
   ^{:macro true
     :added "1.0"}
-  loop (fn* loop [&form &env & decl] (cons 'loop* decl)))
+  let (fn* let [& decl] (cons 'let* decl)))
 
 (def
   ^{:macro true
     :added "1.0"}
-  fn (fn* fn [&form &env & decl]
-          (.withMeta ^clojure.lang.IObj
-           (cons 'fn* decl)
-                     (.meta ^clojure.lang.IMeta &form))))
+  loop (fn* loop [& decl] (cons 'loop* decl)))
 
 (def
   ^{:macro true
     :added "1.0"}
-  mt (fn* fn [&form &env & decl] (.meta ^clojure.lang.IMeta &form)))
+  fn (fn* fn [& decl] (cons 'fn* decl)))
 
 (def
   ^{:arglists '([coll])
-    :doc "Returns the first item in the collection. Calls seq on its
-    argument. If coll is nil, returns nil."
+    :doc "Returns the first item in the collection.
+    If coll is nil, returns nil."
     :added "1.0"
     :static true}
   first fmlisp.lang/first)
@@ -55,18 +55,41 @@
 (def
   ^{:arglists '([coll])
     :tag clojure.lang.ISeq
-    :doc "Returns a seq of the items after the first. Calls seq on its
-  argument.  If there are no more items, returns nil."
+    :doc "Returns a seq of the items after the first.
+    If there are no more items, returns nil."
     :added "1.0"}
   next fmlisp.lang/next)
 
 (def
   ^{:arglists '([coll])
     :tag clojure.lang.ISeq
-    :doc "Returns a possibly empty seq of the items after the first. Calls seq on its
-  argument."
+    :doc "Returns a possibly empty seq of the items after the first."
     :added "1.0"}
   rest fmlisp.lang/rest)
+
+(def
+  ^{:doc "Same as (first (first x))"
+    :arglists '([x])
+    :added "1.0"}
+  ffirst (fn ffirst [x] (first (first x))))
+
+(def
+  ^{:doc "Same as (next (first x))"
+    :arglists '([x])
+    :added "1.0"}
+  nfirst (fn nfirst [x] (next (first x))))
+
+(def
+  ^{:doc "Same as (first (next x))"
+    :arglists '([x])
+    :added "1.0"}
+  fnext (fn fnext [x] (first (next x))))
+
+(def
+  ^{:doc "Same as (next (next x))"
+    :arglists '([x])
+    :added "1.0"}
+  nnext (fn nnext [x] (next (next x))))
 
 (def
   ^{:arglists '([] [coll] [coll x] [coll x & xs])
@@ -92,11 +115,11 @@
   seq fmlisp.lang/seq)
 
 (def
-  ^{:arglists '([^Class c x])
-    :doc "Evaluates x and tests if it is an instance of the class
-    c. Returns true or false"
+  ^{:arglists '([t x])
+    :doc "Evaluates `x` and tests if it is a value of type `t`.
+    Returns `true` or `false`"
     :added "1.0"}
-  instance? fmlisp.lang/instance?)
+  is? fmlisp.lang/is?)
 
 (def
   ^{:arglists '([message])
@@ -145,5 +168,66 @@
     :static true}
   butlast fmlisp.lang/butlast)
 
-(def not
-  (fn [a] (if a false true)))
+(def
+  ^{:arglists '([map key val] [map key val & kvs])
+    :doc "assoc[iate]. When applied to a map, returns a new map of the
+    same (hashed/sorted) type, that contains the mapping of key(s) to
+    val(s). When applied to a vector, returns a new vector that
+    contains val at index. Note - index must be <= (count vector)."
+    :added "1.0"
+    :static true}
+  assoc
+  (fn ^:static assoc
+    ([map key val] (fmlisp.lang/assoc map key val))
+    ([map key val & kvs]
+     (let [ret (fmlisp.lang/assoc map key val)]
+       (if kvs
+         (if (next kvs)
+           (assoc ret (first kvs) (second kvs) (nnext kvs))
+           (throw (error "assoc expects even number of arguments after map/vector, found odd number")))
+         ret)))))
+
+;; metadata
+
+(def
+  ^{:arglists '([x])
+    :doc "Returns the metadata of `x`, returns nil if there is no metadata."
+    :added "1.0"
+    :static true}
+  meta fmlisp.lang/meta)
+
+(def
+  ^{:arglists '([x m])
+    :doc "Returns an object of the same type and value as `x`, with
+    map m as its metadata."
+    :added "1.0"
+    :static true}
+  with-meta fmlisp.lang/with-meta)
+
+(def ^{:private true :dynamic true}
+  assert-valid-fdecl (fn [fdecl]))
+
+(def
+  ^{:private true}
+  sigs
+  (fn [fdecl]
+    (assert-valid-fdecl fdecl)
+    (let [asig
+          (fn [fdecl]
+            (let [arglist (first fdecl)
+                 ;elide implicit macro args
+                  arglist (if (fmlisp.lang/= '&form (first arglist))
+                            (fmlisp.lang/subvec arglist 2 (fmlisp.lang/count arglist))
+                            arglist)
+                  body (next fdecl)]
+              (if (map? (first body))
+                (if (next body)
+                  (with-meta arglist (conj (if (meta arglist) (meta arglist) {}) (first body)))
+                  arglist)
+                arglist)))]
+      (if (seq? (first fdecl))
+        (loop [ret [] fdecls fdecl]
+          (if fdecls
+            (sigs (conj ret (asig (first fdecls))) (next fdecls))
+            (seq ret)))
+        (list (asig fdecl))))))

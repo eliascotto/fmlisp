@@ -15,6 +15,26 @@ fn starts_with_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     }
 }
 
+fn index_of(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 2 {
+        return error("Wrong number of arguments passed to index-of. Expecting 2");
+    }
+    match (args[0].clone(), args[1].clone()) {
+        (Value::Str(s), Value::Str(substr)) => {
+            let index = if let Some(idx) = s.find(&substr) {
+                idx as i64
+            } else {
+                -1
+            };
+            Ok(Value::Integer(index))
+        }
+        _ => error("Expecting two strings"),
+    }
+}
+
 pub fn string_functions() -> Vec<(&'static str, Value)> {
-    vec![("starts-with?", func(starts_with_q))]
+    vec![
+        ("starts-with?", func(starts_with_q)),
+        ("index-of", func(index_of)),
+    ]
 }

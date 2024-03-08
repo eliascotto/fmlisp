@@ -2,6 +2,7 @@ use itertools::Itertools;
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::env::Environment;
@@ -9,6 +10,8 @@ use crate::lang;
 use crate::reader;
 use crate::symbol::Symbol;
 use crate::values::keyword;
+use crate::values::list_from_vec;
+use crate::values::symbol;
 use crate::values::LispErr::{self};
 use crate::values::{format_error, ExprArgs, ToValue, Value, ValueRes};
 use crate::var::Var;
@@ -104,19 +107,10 @@ fn is_macro_call(ast: Value, env: Rc<Environment>) -> Option<(Value, ExprArgs)> 
             Value::Symbol(ref s) => {
                 // let val = self.get_symbol_value(s);
                 match env.get_symbol_value(s) {
-                    Some(val) => {
-                        match (*val).clone() {
-                            f @ Value::Lambda { is_macro: true, .. } => {
-                                // Evaluate the arguments before apply the macro fn
-                                let args = v[1..]
-                                    .iter()
-                                    .map(|v| eval(v.clone(), env.clone()).unwrap())
-                                    .collect();
-                                Some((f, args))
-                            }
-                            _ => None,
-                        }
-                    }
+                    Some(val) => match (*val).clone() {
+                        f @ Value::Lambda { is_macro: true, .. } => Some((f, v[1..].to_vec())),
+                        _ => None,
+                    },
                     None => None,
                 }
             }
@@ -184,6 +178,50 @@ fn get_meta_key(meta: Option<HashMap<Value, Value>>, key: Value) -> Option<Value
     }
 }
 
+/// Return a Value that is the body of the Lambda, or Nil.
+/// Supports the extraction of multiple forms in the body.
+fn get_body_definitions(args: Vec<Value>) -> Rc<Value> {
+    if args.len() > 1 {
+        // Let's wrap multiple forms body into a `do` func.
+        // It's only in the interpreter for the moment.
+        let mut defs = vec![symbol("do")];
+        defs.extend(args.into_iter().map(|v| v.clone()));
+        Rc::new(list_from_vec(defs))
+    } else if args.len() == 1 {
+        Rc::new(args[0].clone())
+    } else {
+        Rc::new(Value::Nil)
+    }
+}
+
+/// Returns the index in the params array for Value::Lambda, which has length `arity`,
+/// or None.
+fn find_params_index_by_arity(params: &[Rc<Value>], arity: usize) -> Option<usize> {
+    for (index, param) in params.iter().enumerate() {
+        if let Value::Vector(v, _) = &**param {
+            if v.len() == arity {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
+// Returns a tuple ast-params based on the function's arity needed
+pub fn find_ast_params_by_arity(
+    ast: &[Rc<Value>],
+    params: &[Rc<Value>],
+    arity: usize,
+) -> Option<(Rc<Value>, Rc<Value>)> {
+    // Get the index of the correct arity for params.
+    // Then use the corresponding params and ast for executing the Lambda
+    if let Some(idx) = find_params_index_by_arity(params, arity) {
+        Some((ast[idx].clone(), params[idx].clone()))
+    } else {
+        None
+    }
+}
+
 pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispErr> {
     let ret: Result<Rc<Value>, LispErr>;
 
@@ -243,10 +281,20 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
 
                                 // Copy Meta from symbol into the Lambda definition
                                 let value = match &*value {
-                                    f @ Value::Lambda { .. } => {
-                                        let meta_val =
-                                            Value::HashMap(Rc::new(sym_meta.clone()), None);
-                                        let new_val = f.clone().with_meta(&meta_val).unwrap();
+                                    Value::Lambda {
+                                        ast, env, params, ..
+                                    } => {
+                                        let is_macro =
+                                            get_meta_key(Some(sym_meta.clone()), keyword("macro"))
+                                                == Some(Value::Bool(true));
+
+                                        let new_val = Value::Lambda {
+                                            ast: ast.clone(),
+                                            env: env.clone(),
+                                            params: params.clone(),
+                                            is_macro, // Set is_macro is macro in metadata
+                                            meta: Some(sym_meta.clone()),
+                                        };
                                         Rc::new(new_val)
                                     }
                                     _ => value.clone(),
@@ -278,7 +326,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             )),
                         }
                     }
-                    Value::Symbol(ref headsym) if headsym.name() == "let" => {
+                    Value::Symbol(ref headsym) if headsym.name() == "let*" => {
                         if args.len() < 1 || args.len() > 2 {
                             return error!(
                                 "Wrong number of arguments given to let. Expecting 1 or 2"
@@ -375,25 +423,91 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             _ => Ok(Rc::new(Value::Nil)),
                         }
                     }
-                    Value::Symbol(ref headsym) if headsym.name() == "fn" => {
+                    Value::Symbol(ref headsym) if headsym.name() == "fn*" => {
                         if args.len() < 1 {
                             return error!(
                                 "Wrong number of arguments given to fn. Expecting at least 1"
                             );
                         }
+                        let mut args_idx = 0;
 
-                        let params = match args[0].clone() {
-                            Value::Vector(_, _) => args[0].clone(),
-                            _ => return error!("fn arguments have to be a vector"),
+                        // Optional name for lambda
+                        let lambda_name = match args[0].clone() {
+                            Value::Symbol(_) => {
+                                args_idx += 1;
+                                Some(args[0].clone())
+                            }
+                            _ => None,
                         };
-                        let body = match args.get(1) {
-                            Some(v) => v,
-                            None => &Value::Nil,
+                        let mut ast_v = vec![]; // Vec of bodies
+                        let mut params_v = vec![]; // Vec of params
+
+                        // Function overloading
+                        match args[args_idx].clone() {
+                            // If vector, so a function with params and body
+                            Value::Vector(_, _) => {
+                                let params = args[args_idx].clone();
+                                args_idx += 1;
+                                // Then function body
+                                let lambda_body = get_body_definitions(args[args_idx..].to_vec());
+                                ast_v.push(lambda_body);
+                                params_v.push(Rc::new(params));
+                            }
+                            // fn supports multiparmeter definitions using lists
+                            Value::List(_, _) => {
+                                // Looping trough each list
+                                for index in args_idx..(args.len() - args_idx) {
+                                    match args[index].clone() {
+                                        Value::List(l, _) => {
+                                            if l.is_empty() {
+                                                return error!(
+                                                    "Function overloading cannot be empty."
+                                                );
+                                            }
+                                            // Every list should be composed by arguments and body
+                                            // (fn* test
+                                            //   ([a] (test a nil))
+                                            //   ([a val] (operation a nil)))
+                                            params_v.push(Rc::new(l[0].clone()));
+                                            ast_v.push(get_body_definitions(l[1..].to_vec()));
+                                        }
+                                        _ => {
+                                            return error!(format!(
+                                                "fn definition expected a List, found {} instead",
+                                                args[index].as_str()
+                                            ))
+                                        }
+                                    }
+                                }
+
+                                // Checking overloads arity and make sure that they're all different
+                                let mut fn_arity = HashSet::new();
+                                for p in params_v.clone() {
+                                    match &*p {
+                                        Value::Vector(v, _) => {
+                                            let length = v.len();
+                                            if !fn_arity.insert(length) {
+                                                return error!(
+                                                    "Can't have 2 overloads with same arity."
+                                                );
+                                            }
+                                        }
+                                        _ => return error!("Function arguments must be a vector."),
+                                    }
+                                }
+                            }
+                            _ => {
+                                return error!(format!(
+                                    "fn arguments have to be in the form a vector or a list.\n{}",
+                                    ast
+                                ))
+                            }
                         };
+
                         Ok(Rc::new(Value::Lambda {
-                            ast: Rc::new((*body).clone()),
+                            ast: ast_v,
                             env: mut_env.borrow().clone(),
-                            params: Rc::new(params),
+                            params: params_v,
                             is_macro: false,
                             meta: None,
                         }))
@@ -510,9 +624,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                     }
                     Value::Symbol(ref headsym) if headsym.name() == "throw" => {
                         if args.len() != 1 {
-                            return error!(
-                                "Wrong number of arguments passed to throw. Expecting 1"
-                            );
+                            return error!(format!(
+                                "Wrong number of arguments ({}) passed to throw. Expecting 1",
+                                args.len()
+                            ));
                         }
                         match eval(args[0].clone(), mut_env.borrow().clone()) {
                             Ok(res) => match res {
@@ -567,30 +682,30 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 ast: mast,
                                 env: menv,
                                 params,
-                                meta,
                                 ..
                             } => {
-                                let is_macro = get_meta_key(meta.clone(), keyword("macro"))
-                                    == Some(Value::Bool(true));
-                                let a = &**mast;
+                                let lambda_ast = &**mast;
+                                let bind_args = args
+                                    .iter()
+                                    .map(|rc_arg| {
+                                        eval(rc_arg.clone(), mut_env.borrow().clone()).unwrap()
+                                    })
+                                    .collect::<Vec<Value>>();
 
-                                // A macro can also be defined using metadata. If the function is a macro
-                                // avoid evaluating the arguments.
-                                let bind_args = if is_macro {
-                                    args.clone()
-                                } else {
-                                    args.iter()
-                                        .map(|rc_arg| {
-                                            eval(rc_arg.clone(), mut_env.borrow().clone()).unwrap()
-                                        })
-                                        .collect::<Vec<Value>>()
-                                };
-                                // Now bind the arguments to the lambda params in a new env
-                                let new_env = menv.bind(params.clone(), bind_args)?;
-
-                                ast = a.clone();
-                                mut_env.replace(new_env);
-                                continue 'tco;
+                                let args_count = bind_args.len();
+                                if let Some((p, a)) =
+                                    find_ast_params_by_arity(lambda_ast, params, args_count)
+                                {
+                                    // Now bind the arguments to the lambda params in a new env
+                                    let new_env = menv.bind(p, bind_args)?;
+                                    ast = (*a).clone();
+                                    mut_env.replace(new_env);
+                                    continue 'tco;
+                                } // else
+                                return error!(format!(
+                                    "Wrong number of arguments ({}) passed to function {}",
+                                    args_count, f
+                                ));
                             }
                             _ => error!(format!("Attempt to call non-function {}", f)),
                         }

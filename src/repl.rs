@@ -811,12 +811,12 @@ mod tests {
     #[test]
     fn test_instance_q() {
         let repl = Repl::default();
-        assert_eq!(repl.rep("(instance? 'Integer 12)").unwrap(), "true");
-        assert_eq!(repl.rep("(instance? 'Integer 12.4)").unwrap(), "false");
-        assert_eq!(repl.rep("(instance? 'Float 12.4)").unwrap(), "true");
-        assert_eq!(repl.rep("(instance? 'String \"abc\")").unwrap(), "true");
-        assert_eq!(repl.rep("(instance? 'HashMap {:x 1})").unwrap(), "true");
-        assert_eq!(repl.rep("(instance? 'Vector [1 2 3])").unwrap(), "true");
+        assert_eq!(repl.rep("(is? 'Integer 12)").unwrap(), "true");
+        assert_eq!(repl.rep("(is? 'Integer 12.4)").unwrap(), "false");
+        assert_eq!(repl.rep("(is? 'Float 12.4)").unwrap(), "true");
+        assert_eq!(repl.rep("(is? 'String \"abc\")").unwrap(), "true");
+        assert_eq!(repl.rep("(is? 'HashMap {:x 1})").unwrap(), "true");
+        assert_eq!(repl.rep("(is? 'Vector [1 2 3])").unwrap(), "true");
     }
 
     #[test]
