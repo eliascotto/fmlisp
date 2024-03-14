@@ -60,7 +60,10 @@ impl Repl {
                     if line.len() > 0 {
                         match self.rep(&line) {
                             Ok(out) => println!("{}", out),
-                            Err(e) => self.handle_error(e),
+                            Err(e) => {
+                                println!("foo 10 {}", format_error(e.clone()));
+                                self.handle_error(e)
+                            }
                         }
                     }
                 }
@@ -84,7 +87,7 @@ impl Repl {
                     String::from("Execution error")
                 };
 
-                println!("{}\n{}", error, err.message())
+                println!("{} at REPL\n{}", error, err.message())
             }
             _ => println!("Error: {}", format_error(e)),
         }
@@ -97,14 +100,6 @@ impl Default for Repl {
         let repl = Repl::new();
 
         core::load_core(repl.environment.clone()); // Load language core
-
-        let defs = vec![
-            // "(def not (fn [a] (if a false true)))",
-            "(defmacro cond (fn [& xs] (if (> (count xs) 0) (list 'if (first xs) (if (> (count xs) 1) (nth xs 1) (throw \"odd number of forms to cond\")) (cons 'cond (rest (rest xs)))))))",
-        ];
-        for def in defs {
-            let _ = repl.rep(def);
-        }
 
         repl
     }

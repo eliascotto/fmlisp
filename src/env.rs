@@ -214,10 +214,9 @@ impl Environment {
     pub fn get_current_namespace_symbol(&self) -> Symbol {
         match self.get_main_environment() {
             Environment::MainEnvironment(env) => env.get_current_namespace_symbol(),
-            Environment::LocalEnvironment(..) => panic!(
-                "In get_current_namespace_name(): get_main_environment() returns LocalEnvironment,\
-		                 but by definition should only return MainEnvironment"
-            ),
+            Environment::LocalEnvironment(parent_env, ..) => parent_env
+                .get_main_environment()
+                .get_current_namespace_symbol(),
         }
     }
 
@@ -401,12 +400,6 @@ impl Environment {
         let new_env = Environment::new_local_environment(Rc::new((*self).clone()));
         match (*mbinds).clone() {
             Value::List(binds, _) | Value::Vector(binds, _) => {
-                // if binds.len() != exprs.len() {
-                //     return Err(ErrString(format!(
-                //         "Length mismatching between binds and exprs.\nbinds: {:?}\nexprs: {:?}",
-                //         binds, exprs,
-                //     )));
-                // }
                 for (i, b) in binds.iter().enumerate() {
                     match b {
                         Value::Symbol(s) if s.name() == "&" => {

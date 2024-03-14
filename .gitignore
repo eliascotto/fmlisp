@@ -2,3 +2,5 @@
 .vscode
 /.lsp
 /.clj-kondo
+/.zed
+history

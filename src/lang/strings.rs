@@ -32,9 +32,21 @@ fn index_of(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     }
 }
 
+fn concat_str(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    let mut ret = vec![];
+    for seq in a.iter() {
+        match seq {
+            Value::Str(s) => ret.push(s.clone()),
+            _ => return error("non-coll passed to concat"),
+        }
+    }
+    Ok(Value::Str(ret.join("")))
+}
+
 pub fn string_functions() -> Vec<(&'static str, Value)> {
     vec![
         ("starts-with?", func(starts_with_q)),
         ("index-of", func(index_of)),
+        ("concat-str", func(concat_str)),
     ]
 }

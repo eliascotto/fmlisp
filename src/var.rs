@@ -1,18 +1,20 @@
-use crate::keyword::Keyword;
-use crate::symbol::Symbol;
-use crate::values::{ToValue, Value};
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+
+use crate::keyword::Keyword;
+use crate::symbol::Symbol;
+use crate::values::{ToValue, Value};
 
 // Var
 // Bring together a namespace, a symbol and a value.
 // Clojure Environment, keeps a map of Symbol-Var/Classes,
 // so every single definition loaded inside the evironment is effectively
 // a Var. Fmlisp will keep the same decision.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq)]
 pub struct Var {
     // Namespace
     pub ns: Symbol,
@@ -96,5 +98,35 @@ impl Hash for Var {
 impl fmt::Display for Var {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "#'{}/{}", self.ns, self.sym)
+    }
+}
+
+impl Ord for Var {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // First, compare the namespaces
+        let ns_ord = self.ns.cmp(&other.ns);
+        if ns_ord != Ordering::Equal {
+            return ns_ord;
+        }
+
+        // If namespaces are equal, compare the symbols
+        let sym_ord = self.sym.cmp(&other.sym);
+        if sym_ord != Ordering::Equal {
+            return sym_ord;
+        }
+
+        // If namespaces and symbols are equal, compare the values
+        match (self.val.borrow().as_ref(), other.val.borrow().as_ref()) {
+            (Value::Nil, Value::Nil) => Ordering::Equal,
+            (Value::Nil, _) => Ordering::Less,
+            (_, Value::Nil) => Ordering::Greater,
+            _ => self.val.borrow().as_ref().cmp(&other.val.borrow().as_ref()),
+        }
+    }
+}
+
+impl PartialOrd for Var {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }

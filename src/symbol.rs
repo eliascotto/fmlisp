@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -16,19 +17,6 @@ macro_rules! sym {
     ($x:expr) => {
         Symbol::new($x)
     };
-}
-
-impl Hash for Symbol {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        (&self.name, &self.ns).hash(state);
-    }
-}
-
-impl PartialEq for Symbol {
-    // meta doesn't factor into equality
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.ns == other.ns
-    }
 }
 
 impl Symbol {
@@ -104,5 +92,42 @@ impl fmt::Display for Symbol {
             write!(f, "{}", self.name)?;
         }
         Ok(())
+    }
+}
+
+impl Hash for Symbol {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (&self.name, &self.ns).hash(state);
+    }
+}
+
+impl PartialEq for Symbol {
+    // meta doesn't factor into equality
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.ns == other.ns
+    }
+}
+
+impl Ord for Symbol {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // First, compare the namespaces
+        match (&self.ns, &other.ns) {
+            (Some(ns1), Some(ns2)) => match ns1.cmp(ns2) {
+                Ordering::Equal => (),
+                ord => return ord,
+            },
+            (Some(_), None) => return Ordering::Less,
+            (None, Some(_)) => return Ordering::Greater,
+            (None, None) => (),
+        }
+
+        // If namespaces are equal or both None, compare the names
+        self.name.cmp(&other.name)
+    }
+}
+
+impl PartialOrd for Symbol {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }

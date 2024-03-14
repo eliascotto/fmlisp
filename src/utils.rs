@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::env;
 
 // Just a little sugar around having to write 'num % 2 == 0'
@@ -48,5 +49,11 @@ macro_rules! if_debug {
         if crate::utils::is_debug_env() {
             $body
         }
+    };
+}
+
+macro_rules! backtrace {
+    () => {
+        println!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
     };
 }

@@ -75,17 +75,29 @@ pub fn load_core(env: Rc<Environment>) {
     let _ = env.add_referred_namespace(&sym!("fmlisp.core"));
 }
 
-// Transform string into a FMLisp Value
+/// Transform string into a FMLisp Value.
 pub fn read(s: &str) -> ValueRes {
     reader::read_str(s.to_string())
 }
 
-// Transform the Value to string
+/// Transform the Value to string.
 pub fn print(exp: Value) -> String {
     exp.pr_str()
 }
 
-fn qq_iter(elts: &ExprArgs) -> Value {
+/// Add AST to error trace.
+pub fn process_error(e: &LispErr, ast: &Value) -> LispErr {
+    match e.clone() {
+        // Load trace in case of apply raised an error
+        LispErr::Error(mut err) => {
+            err.add_trace(ast.clone());
+            LispErr::Error(err)
+        }
+        _ => e.clone(),
+    }
+}
+
+fn qq_iter(elts: &ExprArgs, env: Rc<Environment>) -> Value {
     let mut acc = list![];
     for elt in elts.iter().rev() {
         if let Value::List(v, _) = elt {
@@ -98,13 +110,17 @@ fn qq_iter(elts: &ExprArgs) -> Value {
                 }
             }
         }
-        acc = list![Value::Symbol(sym!("cons")), quasiquote(&elt), acc];
+        acc = list![
+            Value::Symbol(sym!("cons")),
+            quasiquote(&elt, env.clone()),
+            acc
+        ];
     }
     acc
 }
 
-fn quasiquote(ast: &Value) -> Value {
-    match ast {
+fn quasiquote(ast: &Value, env: Rc<Environment>) -> Value {
+    match ast.clone() {
         Value::List(v, _) => {
             if v.len() == 2 {
                 if let Value::Symbol(ref s) = v[0] {
@@ -113,28 +129,64 @@ fn quasiquote(ast: &Value) -> Value {
                     }
                 }
             }
-            qq_iter(&v)
+            qq_iter(&v, env)
         }
-        Value::Vector(v, _) => list![Value::Symbol(sym!("vec")), qq_iter(&v)],
-        Value::HashMap(_, _) | Value::Symbol(_) => {
+        Value::Vector(v, _) => list![Value::Symbol(sym!("vec")), qq_iter(&v, env)],
+        Value::Symbol(mut sym) => {
+            sym.ns = Some(env.get_current_namespace_name());
+            list![Value::Symbol(sym!("quote")), Value::Symbol(sym)]
+        }
+        Value::HashMap(_, _) | Value::Set(_, _) => {
             list![Value::Symbol(sym!("quote")), ast.clone()]
         }
         _ => ast.clone(),
     }
 }
 
-/// Returns a macro function and the arguments, if found or None
-fn is_macro_call(ast: Value, env: Rc<Environment>) -> Option<(Value, ExprArgs)> {
-    match ast {
+// How to solve the macro definition inside a different namespace?
+//
+// Problem:
+//  Macro expansion should resolve all functions Var in the namespace where the
+// macro has been declared. So if the Macro call a function fn_b from namespace B,
+// fn_b should be resolved to B/fn_b to make sure no confusion is operated. This is
+// the default behaviour for resolving namespace that Clojure does. How to do that
+// in our code?
+//
+// Solution 1:
+//  During the macroexpansion, change the current namespace to the one of the macro,
+// process the macro body and resolve all the symbols in the namespace of the macro,
+// then change it back to the old namespace. So the macro body will now have all the
+// function symbols with namespace included.
+//
+// Problem 2:
+//  What I get is the body which has different symbols, like arguments (list, let).
+// Not all symbols are the same, so some of them are not present in the context. How
+// can I differentiate them to resolve the macro?
+//
+// Solution 2:
+//  The macro expansion, should happen only into the namespace where the macro is
+// defined.
+
+/// Returns a macro function, the arguments and the macro env, and the namespace of the var
+/// that contains the symbol of the macro, if found or None.
+fn is_macro_call(
+    ast: Value,
+    env: Rc<Environment>,
+) -> Option<(Value, ExprArgs, Rc<Environment>, Symbol)> {
+    match ast.clone() {
         Value::List(v, _) => match v[0] {
             Value::Symbol(ref s) => {
-                // let val = self.get_symbol_value(s);
-                match env.get_symbol_value(s) {
-                    Some(val) => match (*val).clone() {
-                        f @ Value::Lambda { is_macro: true, .. } => Some((f, v[1..].to_vec())),
+                //
+                match env.get(s).as_ref() {
+                    Value::Var(var) => match &*var.val.borrow().clone() {
+                        f @ Value::Lambda {
+                            is_macro: true,
+                            env: e,
+                            ..
+                        } => Some((f.clone(), v[1..].to_vec(), e.clone(), var.ns.clone())),
                         _ => None,
                     },
-                    None => None,
+                    _ => None,
                 }
             }
             _ => None,
@@ -143,14 +195,22 @@ fn is_macro_call(ast: Value, env: Rc<Environment>) -> Option<(Value, ExprArgs)> 
     }
 }
 
-// Expand the Macro call, if found in the code. It returns a tuple
-// with `true` if a macro has been expanded, and the expanded AST, false otherwise.
+/// Expand the Macro call, if found in the code. It returns a tuple
+/// with `true` if a macro has been expanded, and the expanded AST, false otherwise.
 fn macroexpand(mut ast: Value, env: Rc<Environment>) -> (bool, Result<Rc<Value>, LispErr>) {
     let mut was_expanded = false;
-    while let Some((mf, args)) = is_macro_call(ast.clone(), env.clone()) {
-        ast = match mf.apply(args, env.clone()) {
+    while let Some((mf, args, macro_env, macro_ns)) = is_macro_call(ast.clone(), env.clone()) {
+        // During the macro expansion, the macro function has access to
+        // all the public and private functions, macros, and vars defined in its own namespace.
+        // So we're temporary change the current namespace for evaling the macro, then
+        // changing it back to the previous one.
+        let prev_ns = macro_env.get_current_namespace_symbol();
+        macro_env.change_or_create_namespace(&macro_ns);
+
+        ast = match mf.apply(args, macro_env.clone()) {
             Ok(a) => a,
             Err(e) => {
+                macro_env.change_or_create_namespace(&prev_ns); // set ns back
                 match e.clone() {
                     // Load trace in case of apply raised an error
                     LispErr::Error(mut err) => {
@@ -163,6 +223,8 @@ fn macroexpand(mut ast: Value, env: Rc<Environment>) -> (bool, Result<Rc<Value>,
                 }
             }
         };
+
+        macro_env.change_or_create_namespace(&prev_ns); // set ns back
         was_expanded = true;
     }
     (was_expanded, Ok(Rc::new(ast)))
@@ -173,32 +235,49 @@ fn eval_ast(ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispErr> {
         // Symbol returns value in env 'sym ;=> 12
         Value::Symbol(sym) => match env.get_symbol_value(&sym) {
             Some(val) => Ok(val),
-            None => error!(format!("'{}' symbol not found in this context", sym)),
+            None => {
+                error_fmt!(
+                    "'{}' symbol not found in this context: '{}",
+                    sym.to_string(),
+                    env.get_current_namespace_name()
+                )
+            }
         },
         // Vector eval each item [1 2 (+ 2 3)] ;=> [1 2 5]
         Value::Vector(v, _) => {
-            let evaled: Vec<Value> = v
-                .iter()
-                .map(|x| eval(x.clone(), env.clone()).unwrap())
-                .collect();
+            let mut evaled = vec![];
+            for c in v.iter() {
+                match eval(c.clone(), env.clone()) {
+                    Ok(l) => evaled.push(l),
+                    Err(e) => return Err(process_error(&e, &ast)),
+                }
+            }
             Ok(Value::Vector(Rc::new(evaled), None).to_rc_value())
         }
         // HashMap similar to vector, eval each key/value
         Value::HashMap(hm, meta) => {
             let mut new_hm = HashMap::new();
             for (k, v) in hm.iter() {
-                new_hm.insert(
-                    eval(k.clone(), env.clone()).unwrap(),
-                    eval(v.clone(), env.clone()).unwrap(),
-                );
+                let keys = match eval(k.clone(), env.clone()) {
+                    Ok(v) => v,
+                    Err(e) => return Err(process_error(&e, &ast)),
+                };
+                let values = match eval(v.clone(), env.clone()) {
+                    Ok(v) => v,
+                    Err(e) => return Err(process_error(&e, &ast)),
+                };
+                new_hm.insert(keys, values);
             }
             Ok(Value::HashMap(Rc::new(new_hm), meta.clone()).to_rc_value())
         }
         Value::List(l, _) => {
-            let evaled: Vec<Value> = l
-                .iter()
-                .map(|x| eval(x.clone(), env.clone()).unwrap())
-                .collect();
+            let mut evaled = vec![];
+            for c in l.iter() {
+                match eval(c.clone(), env.clone()) {
+                    Ok(v) => evaled.push(v),
+                    Err(e) => return Err(process_error(&e, &ast)),
+                }
+            }
             Ok(Value::List(Rc::new(evaled), None).to_rc_value())
         }
         _ => Ok(ast.to_rc_value()),
@@ -266,6 +345,40 @@ pub fn find_ast_and_params_by_arity(
     None
 }
 
+// Returns a new local environment with all the binds sym-sexpr evaluated and
+// binded into it. Requires binds to be a Vector with even number of arguments.
+fn bind_local_env(
+    binds: &Rc<Vec<Value>>,
+    ast: &Value,
+    parent_env: Rc<Environment>,
+) -> Result<Rc<Environment>, LispErr> {
+    let local_env = Rc::new(parent_env.new_local());
+    for (b, e) in binds.iter().tuples() {
+        match b {
+            Value::Symbol(sym) => {
+                let val = match eval_to_rc(e.clone(), local_env.clone()) {
+                    Ok(v) => v,
+                    Err(e) => return Err(process_error(&e, ast)),
+                };
+                let var = Var::new(
+                    local_env.get_current_namespace_symbol(),
+                    (*sym).clone(),
+                    val,
+                );
+                // Insert the let bindings into the local env, as Vars
+                local_env.insert((*sym).clone(), Value::Var(var).to_rc_value());
+            }
+            _ => {
+                return error!(format!(
+                    "Invalid use of binding with {}, symbol expected",
+                    b
+                ))
+            }
+        }
+    }
+    Ok(local_env)
+}
+
 pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispErr> {
     let ret: Result<Rc<Value>, LispErr>;
 
@@ -295,7 +408,12 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                 match macroexpand(ast.clone(), mut_env.borrow().clone()) {
                     // Eval the extended ast
                     (true, Ok(new_ast)) => {
-                        return eval_to_rc((*new_ast).clone(), mut_env.borrow().clone())
+                        return match eval_to_rc((*new_ast).clone(), mut_env.borrow().clone()) {
+                            Ok(v) => Ok(v),
+                            Err(e) => {
+                                return Err(process_error(&e, &ast));
+                            }
+                        }
                     }
                     (_, Err(e)) => return Err(e),
                     _ => (), // if not a macro, don't do nothing
@@ -317,7 +435,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                         match args[0].clone() {
                             Value::Symbol(sym) => {
                                 let value = if args.len() > 1 {
-                                    eval_to_rc(args[1].clone(), mut_env.borrow().clone())?
+                                    match eval_to_rc(args[1].clone(), mut_env.borrow().clone()) {
+                                        Ok(v) => v,
+                                        Err(e) => return Err(process_error(&e, &ast)),
+                                    }
                                 } else {
                                     Value::Nil.to_rc_value()
                                 };
@@ -328,6 +449,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                     Value::Lambda {
                                         ast, env, params, ..
                                     } => {
+                                        // Redefine a function to catch is it's a macro or not
                                         let is_macro =
                                             get_meta_key(Some(sym_meta.clone()), keyword("macro"))
                                                 == Some(Value::Bool(true));
@@ -381,35 +503,16 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             Value::Vector(ref binds, _) => {
                                 if binds.len() % 2 == 1 {
                                     return error!(
-                                        "Binding vector requires an even number of forms"
+                                        "let binding vector requires an even number of forms"
                                     );
                                 }
 
                                 // Clone the environment, creating a local one
-                                let local_env = Rc::new(mut_env.borrow().new_local());
-                                for (b, e) in binds.iter().tuples() {
-                                    match b {
-                                        Value::Symbol(sym) => {
-                                            let val = eval_to_rc(e.clone(), local_env.clone())?;
-                                            let var = Var::new(
-                                                mut_env.borrow().get_current_namespace_symbol(),
-                                                (*sym).clone(),
-                                                val,
-                                            );
-                                            // Insert the let bindings into the local env, as Vars
-                                            local_env.insert(
-                                                (*sym).clone(),
-                                                Value::Var(var).to_rc_value(),
-                                            );
-                                        }
-                                        _ => {
-                                            return error!(format!(
-                                                "Invalid use of binding with {}, symbol expected",
-                                                b
-                                            ))
-                                        }
-                                    }
-                                }
+                                let local_env =
+                                    match bind_local_env(binds, &ast, mut_env.borrow().clone()) {
+                                        Ok(env) => env,
+                                        Err(e) => return Err(e),
+                                    };
                                 if let Some(body) = args.get(1) {
                                     // Eval the body into the local env previously created
                                     ast = body.clone();
@@ -435,7 +538,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                         } else {
                             // Eval all the previous forms
                             for a in args[..l.len() - 1].iter() {
-                                eval_to_rc(a.clone(), mut_env.borrow().clone())?;
+                                match eval_to_rc(a.clone(), mut_env.borrow().clone()) {
+                                    Ok(_) => {}
+                                    Err(e) => return Err(process_error(&e, &ast)),
+                                }
                             }
 
                             // Get the last form (or nil) and evalue it
@@ -444,13 +550,116 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             continue 'tco;
                         }
                     }
+                    Value::Symbol(ref headsym) if headsym.name() == "loop*" => {
+                        if args.len() < 1 {
+                            return argument_error!(
+                                "Wrong number of arguments given to if. Expecting 2 or 3"
+                            );
+                        }
+                        match args[0] {
+                            Value::Vector(ref loop_binds, _) => {
+                                if loop_binds.len() % 2 == 1 {
+                                    return error_fmt!(
+                                        "loop binding vector requires an even number of forms"
+                                    );
+                                }
+
+                                if args.len() > 1 {
+                                    let loop_env = match bind_local_env(
+                                        loop_binds,
+                                        &ast,
+                                        mut_env.borrow().clone(),
+                                    ) {
+                                        Ok(env) => env,
+                                        Err(e) => return Err(e),
+                                    };
+                                    let loop_body = if args.len() == 2 {
+                                        args[1].clone()
+                                    } else {
+                                        let mut defs = vec![Value::Symbol(sym!("do"))];
+                                        defs.extend(args[1..].into_iter().map(|v| v.clone()));
+                                        list_from_vec(defs)
+                                    };
+
+                                    // Extract the keys from the binding vector
+                                    let binds_keys: Vec<Value> = loop_binds
+                                        .chunks(2)
+                                        .map(|chunk| chunk[0].clone())
+                                        .collect();
+                                    loop {
+                                        match eval_to_rc(loop_body.clone(), loop_env.clone()) {
+                                            Ok(res) => match &*res {
+                                                Value::Recur(rec) => {
+                                                    // We need to bind the results of recur call
+                                                    // to initial binding vars
+                                                    if binds_keys.len() != rec.len() {
+                                                        return error_fmt!(
+                                                            "recur received wrong number of params: expected {}",
+                                                            binds_keys.len()
+                                                        );
+                                                    }
+
+                                                    // Bind the results from recur call to the symbols defined
+                                                    // into the loop binding vector.
+                                                    for (i, k) in binds_keys.iter().enumerate() {
+                                                        match k {
+                                                            Value::Symbol(sym) => {
+                                                                let var = Var::new(
+                                                                    loop_env.get_current_namespace_symbol(),
+                                                                    (*sym).clone(),
+                                                                    Rc::new(rec[i].clone()),
+                                                                );
+                                                                // Insert the let bindings into the local env, as Vars
+                                                                loop_env.insert(
+                                                                    (*sym).clone(),
+                                                                    Value::Var(var).to_rc_value(),
+                                                                );
+                                                            }
+                                                            _ => {
+                                                                return error_fmt!(
+                                                                    "Invalid use of binding"
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                _ => return Ok(res),
+                                            },
+                                            Err(e) => return Err(process_error(&e, &ast)),
+                                        }
+                                    }
+                                }
+                            }
+                            _ => return error_fmt!("loop requires a vector for its binding"),
+                        }
+
+                        Ok(Rc::new(Value::Nil)) // nil if no body
+                    }
+                    Value::Symbol(ref headsym) if headsym.name() == "recur" => {
+                        if !args.is_empty() {
+                            let mut res = vec![];
+                            for a in args.iter() {
+                                let eval_res = match eval(a.clone(), mut_env.borrow().clone()) {
+                                    Ok(v) => v,
+                                    Err(e) => return Err(process_error(&e, &ast)),
+                                };
+                                res.push(eval_res);
+                            }
+                            Ok(Rc::new(Value::Recur(res)))
+                        } else {
+                            Ok(Rc::new(Value::Nil))
+                        }
+                    }
                     Value::Symbol(ref headsym) if headsym.name() == "if" => {
                         if args.len() < 2 || args.len() > 3 {
                             return error!(
                                 "Wrong number of arguments given to if. Expecting 2 or 3"
                             );
                         }
-                        let cond = eval(args[0].clone(), mut_env.borrow().clone())?;
+                        let cond = match eval(args[0].clone(), mut_env.borrow().clone()) {
+                            Ok(v) => v,
+                            Err(e) => return Err(process_error(&e, &ast)),
+                        };
                         match cond {
                             // If FALSE, eval the second form (ELSE)
                             Value::Bool(false) | Value::Nil if args.len() >= 3 => {
@@ -562,7 +771,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                         }
                         // NB eval expects a form, not a string.
                         // So first evaluate the argument, and then evaluate the form in the top environment
-                        ast = eval(args[0].clone(), mut_env.borrow().clone())?;
+                        ast = match eval(args[0].clone(), mut_env.borrow().clone()) {
+                            Ok(v) => v,
+                            Err(e) => return Err(process_error(&e, &ast)),
+                        };
                         mut_env.replace(Rc::new(mut_env.borrow().get_main_environment().clone()));
                         continue 'tco;
                     }
@@ -578,7 +790,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 "Wrong number of arguments given to quasiquoteexpand. Expecting 1"
                             );
                         }
-                        Ok(Rc::new(quasiquote(&args[0])))
+                        Ok(Rc::new(quasiquote(&args[0], mut_env.borrow().clone())))
                     }
                     Value::Symbol(ref headsym) if headsym.name() == "quasiquote" => {
                         if args.len() != 1 {
@@ -586,7 +798,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 "Wrong number of arguments given to quasiquote. Expecting 1"
                             );
                         }
-                        ast = quasiquote(&args[0]);
+                        ast = quasiquote(&args[0], mut_env.borrow().clone());
                         continue 'tco;
                     }
                     Value::Symbol(ref headsym) if headsym.name() == "defmacro" => {
@@ -597,7 +809,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                         }
                         let macro_name = args[0].clone();
                         let macro_args = args[1].clone();
-                        let r = eval(macro_args, mut_env.borrow().clone())?;
+                        let r = match eval(macro_args, mut_env.borrow().clone()) {
+                            Ok(v) => v,
+                            Err(e) => return Err(process_error(&e, &ast)),
+                        };
                         match r {
                             Value::Lambda {
                                 ast, env, params, ..
@@ -702,27 +917,29 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                     }
                     _ => {
                         // At this point we just have to execute the function
-                        let ref f = eval_to_rc(head.clone(), mut_env.borrow().clone())?;
+                        let ref f = match eval_to_rc(head.clone(), mut_env.borrow().clone()) {
+                            Ok(x) => x,
+                            Err(e) => return Err(process_error(&e, &ast)),
+                        };
                         match &*f.borrow() {
                             // Internal FMLisp function
                             Value::Func(_, _) => {
-                                let evaled_args = args
-                                    .iter()
-                                    .map(|rc_arg| {
-                                        eval(rc_arg.clone(), mut_env.borrow().clone()).unwrap()
-                                    })
-                                    .collect::<Vec<Value>>();
+                                let mut evaled_args = vec![];
+                                for a in args {
+                                    match eval(a.clone(), mut_env.borrow().clone()) {
+                                        Ok(v) => evaled_args.push(v),
+                                        Err(e) => {
+                                            return Err(process_error(&e, &ast));
+                                        }
+                                    }
+                                }
 
                                 match f.apply(evaled_args, mut_env.borrow().clone()) {
                                     Ok(ret) => Ok(ret.to_rc_value()),
-                                    Err(e) => match e.clone() {
-                                        // Load trace in case of apply raised an error
-                                        LispErr::Error(mut err) => {
-                                            err.add_trace(ast.clone());
-                                            Err(e)
-                                        }
-                                        _ => Err(e),
-                                    },
+                                    Err(e) => {
+                                        println!("error: {}\n{:?}", ast, e);
+                                        return Err(process_error(&e, &ast));
+                                    }
                                 }
                             }
                             // An internal macro, is a function which the parameter are not evaluated,
@@ -730,14 +947,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             Value::Macro(_, _) => {
                                 match f.apply(args.clone(), mut_env.borrow().clone()) {
                                     Ok(ret) => Ok(ret.to_rc_value()),
-                                    Err(e) => match e.clone() {
-                                        // Load trace in case of apply raised an error
-                                        LispErr::Error(mut err) => {
-                                            err.add_trace(ast.clone());
-                                            Err(e)
-                                        }
-                                        _ => Err(e),
-                                    },
+                                    Err(e) => return Err(process_error(&e, &ast)),
                                 }
                             }
                             // Lambda function defined by the user
@@ -748,19 +958,23 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 ..
                             } => {
                                 let lambda_ast = &**mast;
-                                let bind_args = args
-                                    .iter()
-                                    .map(|rc_arg| {
-                                        eval(rc_arg.clone(), mut_env.borrow().clone()).unwrap()
-                                    })
-                                    .collect::<Vec<Value>>();
+                                let mut bind_args = vec![];
+                                for arg in args.iter() {
+                                    match eval(arg.clone(), mut_env.borrow().clone()) {
+                                        Ok(v) => bind_args.push(v),
+                                        Err(e) => return Err(process_error(&e, &ast)),
+                                    }
+                                }
 
                                 let args_count = bind_args.len();
-                                if let Some((p, a)) =
+                                if let Some((a, p)) =
                                     find_ast_and_params_by_arity(lambda_ast, params, args_count)
                                 {
                                     // Now bind the arguments to the lambda params in a new env
-                                    let new_env = menv.bind(p, bind_args)?;
+                                    let new_env = match menv.bind(p, bind_args) {
+                                        Ok(v) => v,
+                                        Err(e) => return Err(process_error(&e, &ast)),
+                                    };
                                     ast = (*a).clone();
                                     mut_env.replace(new_env);
                                     continue 'tco;

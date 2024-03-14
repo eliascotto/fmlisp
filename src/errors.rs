@@ -1,5 +1,4 @@
 use crate::values::{self, Value};
-use std::borrow::BorrowMut;
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 
@@ -108,7 +107,7 @@ impl Error {
             .enumerate()
             .map(|(i, t)| {
                 if enumerate {
-                    format!("{}: {}", i, t.pr_str())
+                    format!("  {}: {}", i, t.pr_str())
                 } else {
                     format!("{}", t.pr_str())
                 }

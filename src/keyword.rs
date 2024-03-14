@@ -1,4 +1,5 @@
 use crate::symbol::Symbol;
+use std::cmp::Ordering;
 use std::fmt;
 use std::hash::Hash;
 
@@ -40,5 +41,17 @@ impl fmt::Display for Keyword {
         } else {
             write!(f, ":{}", self.sym.name)
         }
+    }
+}
+
+impl Ord for Keyword {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.sym.cmp(&other.sym)
+    }
+}
+
+impl PartialOrd for Keyword {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }

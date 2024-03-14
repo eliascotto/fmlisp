@@ -2,16 +2,20 @@
 
 A fast and modern Lisp. Fast since is built on top of Rust, Modern because it uses Clojure modern lisp sintax. A mix between Common Lisp performance and power, and Clojure modern features.
 
+## Guidelines
+
+- Keep it simple, always prefer the easy solution
+- Optimization comes later
+- Prioritize what matters
+- Write maintanable and generic tests
+
 ## TODO
 
-- `fn*` should support multi params functions body
-- `fn*` should support multiple forms in body
-- Write wrapper for lang functions with doc into fmlisp.core
-- `defn`
+- Fix `set-macro` and test `defn`
 - `refer` function
 - `require` with file loading
 - `doc`
-- TCO for lamba/fn
+- Add support for keyword arguments
 - Proc Macro to define Rust functions as plugins and load them into FMLisp at the startup
 - Start UI with GPUI
 - Add ns exploring REPL functions as `ns-intern` (in a REPL namespace?)

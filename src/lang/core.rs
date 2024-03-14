@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::read_to_string;
 use std::io::{stdin, stdout, Write};
 use std::rc::Rc;
@@ -9,10 +10,11 @@ use crate::env::Environment;
 use crate::errors;
 use crate::reader;
 use crate::symbol::Symbol;
+use crate::utils::IsOdd;
 use crate::values::LispErr::ErrValue;
 use crate::values::{
-    self, _assoc, _dissoc, error, func, hash_map_from_vec, list_from_vec, macro_fn, set_from_vec,
-    vector_from_vec, ExprArgs, LispErr, ToValue, Value, ValueRes,
+    self, _assoc, _dissoc, error, format_error, func, hash_map_from_vec, list_from_vec, macro_fn,
+    set_from_vec, vector_from_vec, ExprArgs, LispErr, ToValue, Value, ValueRes,
 };
 
 /// Macro that receive an Integer and eval the expr.
@@ -179,7 +181,10 @@ fn cons(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             ret.extend_from_slice(&v);
             Ok(list_from_vec(ret.to_vec()))
         }
-        _ => error("cons expects seq as second arg"),
+        _ => error_fmt!(
+            "cons expects seq as second arg, found {} instead",
+            a[1].as_str()
+        ),
     }
 }
 
@@ -480,17 +485,45 @@ fn time_ms(_a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
 }
 
 fn conj(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    match a[0] {
+    if a.is_empty() {
+        return Ok(vector_from_vec(vec![])); // if no args, use []
+    }
+
+    match &a[0] {
         Value::List(ref l, _) => {
-            let args = a[1..]
-                .iter()
-                .rev()
-                .map(|a| a.clone())
-                .collect::<Vec<Value>>();
+            let args = a[1..].iter().rev().cloned().collect::<Vec<Value>>();
             Ok(list_from_vec([&args[..], l].concat()))
         }
-        Value::Vector(ref v, _) => Ok(vector_from_vec([v, &a[1..]].concat())),
-        _ => error("conj expects a sequence"),
+        Value::Vector(ref v, _) => Ok(vector_from_vec(v.iter().chain(&a[1..]).cloned().collect())),
+        Value::HashMap(ref hu, meta) => {
+            let mut h = HashMap::new();
+            for (key, value) in hu.iter() {
+                h.insert(key.clone(), value.clone());
+            }
+            for arg in a.iter().skip(1) {
+                match arg {
+                    Value::Vector(v, _) => {
+                        if v.len() != 2 {
+                            return error_fmt!("conj Vector arg must be a pair");
+                        }
+                        h.insert(v[0].clone(), v[1].clone());
+                    }
+                    Value::HashMap(hm, _) => {
+                        for (key, value) in hm.iter() {
+                            h.insert(key.clone(), value.clone());
+                        }
+                    }
+                    _ => return error_fmt!("conj argument invalid"),
+                }
+            }
+            Ok(Value::HashMap(Rc::new(h), meta.clone()))
+        }
+        Value::Set(ref s, meta) => {
+            let mut set = s.iter().cloned().collect::<HashSet<_>>();
+            set.extend(a.iter().skip(1).cloned());
+            Ok(Value::Set(Rc::new(set), meta.clone()))
+        }
+        _ => error("conj argument type not valid"),
     }
 }
 
@@ -515,7 +548,7 @@ fn seq(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             s.chars().map(|c| Value::Char(c as char)).collect(),
         )),
         Value::Nil => Ok(Value::Nil),
-        _ => error("seq called with non-seq"),
+        _ => error_fmt!("seq called with non-seq {}", a[0].as_str()),
     }
 }
 
@@ -536,6 +569,26 @@ fn set(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
         }
         Value::Str(ref s) => Ok(set_from_vec(s.chars().map(Value::Char).collect())),
         _ => error("set called with non-seq"),
+    }
+}
+
+fn hash_set(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if a.is_empty() {
+        return Ok(Value::Set(Rc::new(HashSet::new()), None));
+    }
+    match a[0] {
+        Value::List(ref l, _) if a.len() == 1 => Ok(set_from_vec(l.to_vec())),
+        _ => Ok(set_from_vec(a.clone())),
+    }
+}
+
+fn sorted_set(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if a.is_empty() {
+        return Ok(Value::TreeSet(Rc::new(BTreeSet::new()), None));
+    }
+    match a[0] {
+        Value::List(ref l, _) if a.len() == 1 => Ok(values::tree_set_from_vec(l.to_vec())),
+        _ => Ok(values::tree_set_from_vec(a.clone())),
     }
 }
 
@@ -572,15 +625,18 @@ fn throw(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
 }
 
 fn error_fn(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if args.len() != 1 {
-        return error("Wrong number of arguments passed to error. Expecting 1");
+    if args.is_empty() {
+        return error("Wrong number of arguments passed to error. Expecting qt least 1");
     }
+    // TODO
+    // when keyword arguments will be supported, add a way to receive the
+    // error type as: (error "blahblah" :type 'syntax)
     match args[0] {
         Value::Str(_) => {
             let e = errors::Error::new(args[0].clone()).to_lisp_error();
             Ok(Value::Error(e))
         }
-        _ => error!("error requires string as first parameter"),
+        _ => error!("error requires symbol or string as first parameter"),
     }
 }
 
@@ -635,7 +691,7 @@ fn atom(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
 
 fn is_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if args.len() != 2 {
-        return error("Wrong number of arguments passed to is?. Expecting 2");
+        return argument_error!("Wrong number of arguments passed to is?. Expecting 2");
     }
     let is = match args[0] {
         Value::Symbol(ref sym) => match args[1] {
@@ -651,13 +707,16 @@ fn is_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             Value::List(_, _) => sym.name == "List",
             Value::Vector(_, _) => sym.name == "Vector",
             Value::HashMap(_, _) => sym.name == "HashMap",
+            Value::TreeMap(_, _) => sym.name == "TreeMap",
             Value::Set(_, _) => sym.name == "Set",
+            Value::TreeSet(_, _) => sym.name == "TreeSet",
             Value::Func(_, _) => sym.name == "Function",
             Value::Macro(_, _) => sym.name == "Function",
             Value::Lambda { .. } => sym.name == "Function",
             Value::Namespace(_) => sym.name == "Namespace",
             Value::Atom(_) => sym.name == "Atom",
             Value::Error(_) => sym.name == "Error",
+            Value::Recur(_) => return error_fmt!("Can only use recur from loop tail position"),
         },
         _ => return error!("is? requires symbol as first parameter"),
     };
@@ -695,30 +754,37 @@ fn private_q(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
 /// to val if supplied. The namespace must exist. The var will adopt any
 /// metadata from the name symbol.  Returns the var.
 fn intern(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
-    if args.len() < 2 || args.len() > 3 {
-        return error("Wrong number of arguments passed to intern. Expecting 2 or 3");
+    if args.len() < 1 || args.len() > 3 {
+        return error_fmt!("Wrong number of arguments passed to intern. Expecting from 1 to 3");
     }
 
-    match (args[0].clone(), args[1].clone()) {
-        (Value::Symbol(ref ns), Value::Symbol(ref name)) => {
-            let sym = Symbol::new_with_ns(&name.name, Some(&ns.name));
-            let val = if let Some(v) = args.get(2) {
-                v.clone()
-            } else {
-                Value::Nil
-            };
-
-            let v = (*env.get(&sym)).clone();
-            let var = match v {
-                Value::Var(_) => v,
-                _ => {
-                    let new_var = env.insert_var(sym.unqualified(), Rc::new(val));
-                    (*new_var).clone()
-                }
-            };
-            Ok(var)
+    if args.len() == 1 {
+        match args[0] {
+            Value::Str(ref s) => Ok(Value::Symbol(Symbol::new(s))),
+            _ => error!("intern requires a string in order to create a symbol"),
         }
-        _ => error!("intern requires a symbol for namespace and a symbol for var name"),
+    } else {
+        match (args[0].clone(), args[1].clone()) {
+            (Value::Symbol(ref ns), Value::Symbol(ref name)) => {
+                let sym = Symbol::new_with_ns(&name.name, Some(&ns.name));
+                let val = if let Some(v) = args.get(2) {
+                    v.clone()
+                } else {
+                    Value::Nil
+                };
+
+                let v = (*env.get(&sym)).clone();
+                let var = match v {
+                    Value::Var(_) => v,
+                    _ => {
+                        let new_var = env.insert_var(sym.unqualified(), Rc::new(val));
+                        (*new_var).clone()
+                    }
+                };
+                Ok(var)
+            }
+            _ => error!("intern requires a symbol for namespace and a symbol for var name"),
+        }
     }
 }
 
@@ -748,6 +814,73 @@ fn load_file_fn(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
             Ok(Value::Nil)
         }
         _ => error!("load-file requires a string"),
+    }
+}
+
+fn hash_map(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.is_empty() {
+        return Ok(values::empty_hash_map());
+    }
+    if args.len().is_odd() {
+        return error_fmt!(
+            "not value supplied for key {} in hash-map",
+            args.last().unwrap().pr_str()
+        );
+    }
+
+    match args[0] {
+        Value::List(ref l, _) if args.len() == 1 => hash_map_from_vec(l.to_vec()),
+        _ => hash_map_from_vec(args),
+    }
+}
+
+fn sorted_map(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.is_empty() {
+        return Ok(values::empty_tree_map());
+    }
+    if args.len().is_odd() {
+        return error_fmt!(
+            "not value supplied for key {} in sorted-map",
+            args.last().unwrap().pr_str()
+        );
+    }
+
+    match args[0] {
+        Value::List(ref l, _) if args.len() == 1 => values::tree_map_from_vec(l.to_vec()),
+        _ => values::tree_map_from_vec(args),
+    }
+}
+
+fn set_macro(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return argument_error!("Wrong number of arguments passed to set-macro. Expecting 1");
+    }
+
+    match args[0] {
+        Value::Var(ref var) => {
+            let mut new_meta = var.meta().unwrap_or(Rc::new(HashMap::new()));
+            new_meta.insert(values::keyword("macro"), Value::Bool(true));
+            var.with_meta(new_meta);
+
+            let val = env.get_symbol_value(&var.sym).unwrap();
+            match &*val {
+                Value::Lambda {
+                    ast, env, params, ..
+                } => {
+                    let new_val = Value::Lambda {
+                        ast: ast.clone(),
+                        env: env.clone(),
+                        params: params.clone(),
+                        is_macro: true,
+                        meta: Some((*new_meta).clone()),
+                    };
+                    env.insert(var.sym, Rc::new(new_val));
+                    Ok(Value::Var(*var))
+                }
+                _ => return error_fmt!("set-macro requires a Var pointing to a fn"),
+            }
+        }
+        _ => error_fmt!("set-macro requires a Var"),
     }
 }
 
@@ -824,6 +957,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
             "sequential?",
             func(fn_is_type!(Value::List(_, _), Value::Vector(_, _))),
         ),
+        ("seq?", func(fn_is_type!(Value::List(_, _)))),
         ("vector", func(|a, _| Ok(vector_from_vec(a)))),
         ("vector?", func(fn_is_type!(Value::Vector(_, _)))),
         ("cons", func(cons)),
@@ -852,9 +986,12 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("keyword?", func(fn_is_type!(Value::Keyword(_)))),
         // Set
         ("set", func(set)),
+        ("hash-set", func(hash_set)),
+        ("sorted-set", func(sorted_set)),
         ("set?", func(fn_is_type!(Value::Set(_, _)))),
         // HASHMAP
-        ("hash-map", func(|a, _| hash_map_from_vec(a))),
+        ("hash-map", func(hash_map)),
+        ("sorted-map", func(sorted_map)),
         ("map?", func(fn_is_type!(Value::HashMap(_, _)))),
         ("assoc", func(assoc)),
         ("dissoc", func(dissoc)),

@@ -1,7 +1,7 @@
 use itertools::Itertools;
-use std::backtrace::Backtrace;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -30,8 +30,12 @@ pub enum Value {
     // STRUCTURES
     List(Rc<Vec<Value>>, Option<HashMap<Value, Value>>),
     Vector(Rc<Vec<Value>>, Option<HashMap<Value, Value>>),
+    // HashMap (standard, sorted)
     HashMap(Rc<HashMap<Value, Value>>, Option<HashMap<Value, Value>>),
+    TreeMap(Rc<BTreeMap<Value, Value>>, Option<HashMap<Value, Value>>),
+    // Set (standard, sorted)
     Set(Rc<HashSet<Value>>, Option<HashMap<Value, Value>>),
+    TreeSet(Rc<BTreeSet<Value>>, Option<HashMap<Value, Value>>),
 
     // FUNCTIONS
     // Internal fmlisp functions defined into /lang
@@ -61,6 +65,9 @@ pub enum Value {
 
     // Error
     Error(LispErr),
+
+    // Recur args eval result
+    Recur(Vec<Value>),
 }
 
 #[derive(Debug, Clone)]
@@ -97,13 +104,6 @@ pub fn error(s: &str) -> ValueRes {
     Err(LispErr::ErrString(s.to_string()))
 }
 
-/// /// Returns a new ArgumentError from a &str
-pub fn arg_error(s: &str) -> ValueRes {
-    let mut err = errors::Error::new_from_str(String::from(s));
-    err.set_type("Argument");
-    Err(LispErr::Error(err))
-}
-
 /// Return a new Error from string received as params.
 ///
 /// ```
@@ -115,10 +115,18 @@ macro_rules! error {
     };
 }
 
+macro_rules! error_fmt {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        let err = crate::errors::Error::new_from_str(msg);
+        Err(LispErr::Error(err))
+    }};
+}
+
 macro_rules! argument_error {
     ($($arg:tt)*) => {{
         let msg = format!($($arg)*);
-        let err = errors::Error::new_with_type(msg, "Argument");
+        let err = crate::errors::Error::new_with_type(msg, "Argument");
         Err(LispErr::Error(err))
     }};
 }
@@ -141,7 +149,13 @@ impl PartialEq for Value {
             | (Value::List(ref a, _), Value::Vector(ref b, _))
             | (Value::Vector(ref a, _), Value::List(ref b, _)) => a == b,
             (Value::HashMap(ref a, _), Value::HashMap(ref b, _)) => a == b,
+            (Value::TreeMap(ref a, _), Value::TreeMap(ref b, _)) => a == b,
+            (Value::HashMap(ref hm, _), Value::TreeMap(ref tm, _)) => hm.iter().eq(tm.iter()),
+            (Value::TreeMap(ref tm, _), Value::HashMap(ref hm, _)) => hm.iter().eq(tm.iter()),
             (Value::Set(ref a, _), Value::Set(ref b, _)) => a == b,
+            (Value::TreeSet(ref a, _), Value::TreeSet(ref b, _)) => a == b,
+            (Value::Set(ref a, _), Value::TreeSet(ref b, _)) => a.iter().eq(b.iter()),
+            (Value::TreeSet(ref a, _), Value::Set(ref b, _)) => a.iter().eq(b.iter()),
             (Value::Func(ref fa, _), Value::Func(ref fb, _)) => fa == fb,
             (Value::Macro(ref ma, _), Value::Macro(ref mb, _)) => ma == mb,
             (Value::Lambda { .. }, Value::Lambda { .. }) => false,
@@ -180,7 +194,18 @@ impl Hash for Value {
                     value.hash(state);
                 }
             }
+            Value::TreeMap(tree_map, _) => {
+                for (key, value) in tree_map.iter() {
+                    key.hash(state);
+                    value.hash(state);
+                }
+            }
             Value::Set(set, _) => {
+                for v in set.iter() {
+                    v.hash(state);
+                }
+            }
+            Value::TreeSet(set, _) => {
                 for v in set.iter() {
                     v.hash(state);
                 }
@@ -211,7 +236,205 @@ impl Hash for Value {
             Value::Error(err) => {
                 err.hash(state);
             }
+            _ => panic!("Value not hashable"),
         }
+    }
+}
+
+// Ord required by Value::TreeMap for a sorted map
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> Ordering {
+        use Value::*;
+        match (self, other) {
+            (Nil, Nil) => Ordering::Equal,
+            (Nil, _) => Ordering::Less,
+            (_, Nil) => Ordering::Greater,
+            (Integer(a), Integer(b)) => a.cmp(b),
+            (Integer(_), _) => Ordering::Less,
+            (_, Integer(_)) => Ordering::Greater,
+            (Float(a), Float(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
+            (Float(_), _) => Ordering::Less,
+            (_, Float(_)) => Ordering::Greater,
+            (Bool(a), Bool(b)) => a.cmp(b),
+            (Bool(_), _) => Ordering::Less,
+            (_, Bool(_)) => Ordering::Greater,
+            (Char(a), Char(b)) => a.cmp(b),
+            (Char(_), _) => Ordering::Less,
+            (_, Char(_)) => Ordering::Greater,
+            (Str(a), Str(b)) => a.cmp(b),
+            (Str(_), _) => Ordering::Less,
+            (_, Str(_)) => Ordering::Greater,
+            (Symbol(a), Symbol(b)) => a.cmp(b),
+            (Symbol(_), _) => Ordering::Less,
+            (_, Symbol(_)) => Ordering::Greater,
+            (Keyword(a), Keyword(b)) => a.cmp(b),
+            (Keyword(_), _) => Ordering::Less,
+            (_, Keyword(_)) => Ordering::Greater,
+            (Var(a), Var(b)) => a.cmp(b),
+            (Var(_), _) => Ordering::Less,
+            (_, Var(_)) => Ordering::Greater,
+            (List(a, _), List(b, _)) => a.cmp(b),
+            (List(_, _), _) => Ordering::Less,
+            (_, List(_, _)) => Ordering::Greater,
+            (Vector(a, _), Vector(b, _)) => a.cmp(b),
+            (Vector(_, _), _) => Ordering::Less,
+            (_, Vector(_, _)) => Ordering::Greater,
+            (HashMap(a, _), HashMap(b, _)) => {
+                let mut a_iter = a.iter();
+                let mut b_iter = b.iter();
+
+                loop {
+                    match (a_iter.next(), b_iter.next()) {
+                        (Some((ak, av)), Some((bk, bv))) => {
+                            let cmp_keys = ak.cmp(bk);
+                            if cmp_keys != Ordering::Equal {
+                                return cmp_keys;
+                            }
+                            let cmp_values = av.cmp(bv);
+                            if cmp_values != Ordering::Equal {
+                                return cmp_values;
+                            }
+                        }
+                        (None, None) => return Ordering::Equal,
+                        (None, Some(_)) => return Ordering::Less,
+                        (Some(_), None) => return Ordering::Greater,
+                    }
+                }
+            }
+            (TreeMap(a, _), TreeMap(b, _)) => {
+                let mut a_iter = a.iter();
+                let mut b_iter = b.iter();
+
+                loop {
+                    match (a_iter.next(), b_iter.next()) {
+                        (Some((ak, av)), Some((bk, bv))) => {
+                            let cmp_keys = ak.cmp(bk);
+                            if cmp_keys != Ordering::Equal {
+                                return cmp_keys;
+                            }
+                            let cmp_values = av.cmp(bv);
+                            if cmp_values != Ordering::Equal {
+                                return cmp_values;
+                            }
+                        }
+                        (None, None) => return Ordering::Equal,
+                        (None, Some(_)) => return Ordering::Less,
+                        (Some(_), None) => return Ordering::Greater,
+                    }
+                }
+            }
+            (HashMap(a, _), TreeMap(b, _)) => {
+                let mut a_iter = a.iter();
+                let mut b_iter = b.iter();
+
+                loop {
+                    match (a_iter.next(), b_iter.next()) {
+                        (Some((ak, av)), Some((bk, bv))) => {
+                            let cmp_keys = ak.cmp(bk);
+                            if cmp_keys != Ordering::Equal {
+                                return cmp_keys;
+                            }
+                            let cmp_values = av.cmp(bv);
+                            if cmp_values != Ordering::Equal {
+                                return cmp_values;
+                            }
+                        }
+                        (None, None) => return Ordering::Equal,
+                        (None, Some(_)) => return Ordering::Less,
+                        (Some(_), None) => return Ordering::Greater,
+                    }
+                }
+            }
+            (TreeMap(a, _), HashMap(b, _)) => {
+                let mut a_iter = a.iter();
+                let mut b_iter = b.iter();
+
+                loop {
+                    match (a_iter.next(), b_iter.next()) {
+                        (Some((ak, av)), Some((bk, bv))) => {
+                            let cmp_keys = ak.cmp(bk);
+                            if cmp_keys != Ordering::Equal {
+                                return cmp_keys;
+                            }
+                            let cmp_values = av.cmp(bv);
+                            if cmp_values != Ordering::Equal {
+                                return cmp_values;
+                            }
+                        }
+                        (None, None) => return Ordering::Equal,
+                        (None, Some(_)) => return Ordering::Less,
+                        (Some(_), None) => return Ordering::Greater,
+                    }
+                }
+            }
+            (Set(a, _), Set(b, _)) => {
+                let mut a_iter = a.iter();
+                let mut b_iter = b.iter();
+
+                loop {
+                    match (a_iter.next(), b_iter.next()) {
+                        (Some(ax), Some(bx)) => {
+                            let cmp_keys = ax.cmp(bx);
+                            if cmp_keys != Ordering::Equal {
+                                return cmp_keys;
+                            }
+                        }
+                        (None, None) => return Ordering::Equal,
+                        (None, Some(_)) => return Ordering::Less,
+                        (Some(_), None) => return Ordering::Greater,
+                    }
+                }
+            }
+            (Set(_, _), _) => Ordering::Less,
+            (_, Set(_, _)) => Ordering::Greater,
+            (TreeSet(a, _), TreeSet(b, _)) => {
+                let mut a_iter = a.iter();
+                let mut b_iter = b.iter();
+
+                loop {
+                    match (a_iter.next(), b_iter.next()) {
+                        (Some(ax), Some(bx)) => {
+                            let cmp_keys = ax.cmp(bx);
+                            if cmp_keys != Ordering::Equal {
+                                return cmp_keys;
+                            }
+                        }
+                        (None, None) => return Ordering::Equal,
+                        (None, Some(_)) => return Ordering::Less,
+                        (Some(_), None) => return Ordering::Greater,
+                    }
+                }
+            }
+            (TreeSet(_, _), _) => Ordering::Less,
+            (_, TreeSet(_, _)) => Ordering::Greater,
+            (Func(_, _), Func(_, _)) => Ordering::Equal,
+            (Func(_, _), _) => Ordering::Less,
+            (_, Func(_, _)) => Ordering::Greater,
+            (Macro(_, _), Macro(_, _)) => Ordering::Equal,
+            (Macro(_, _), _) => Ordering::Less,
+            (_, Macro(_, _)) => Ordering::Greater,
+            (Lambda { .. }, Lambda { .. }) => Ordering::Equal,
+            (Lambda { .. }, _) => Ordering::Less,
+            (_, Lambda { .. }) => Ordering::Greater,
+            (Atom(_), Atom(_)) => Ordering::Equal,
+            (Atom(_), _) => Ordering::Less,
+            (_, Atom(_)) => Ordering::Greater,
+            (Namespace(_), Namespace(_)) => Ordering::Equal,
+            (Namespace(_), _) => Ordering::Less,
+            (_, Namespace(_)) => Ordering::Greater,
+            (Error(_), Error(_)) => Ordering::Equal,
+            (Error(_), _) => Ordering::Less,
+            (_, Error(_)) => Ordering::Greater,
+            (Recur(_), Recur(_)) => Ordering::Equal,
+            (Recur(_), _) => Ordering::Less,
+            (_, Recur(_)) => Ordering::Greater,
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -246,7 +469,18 @@ impl fmt::Display for Value {
                     .collect();
                 pr_seq(&l, "{", "}", " ")
             }
+            Value::TreeMap(tm, _) => {
+                let l = tm
+                    .iter()
+                    .flat_map(|(k, v)| vec![k.clone(), v.clone()])
+                    .collect();
+                pr_seq(&l, "{", "}", " ")
+            }
             Value::Set(set, _) => {
+                let strs: Vec<String> = set.iter().map(|x| x.to_string()).collect();
+                format!("{{{}}}", strs.join(" "))
+            }
+            Value::TreeSet(set, _) => {
                 let strs: Vec<String> = set.iter().map(|x| x.to_string()).collect();
                 format!("{{{}}}", strs.join(" "))
             }
@@ -266,6 +500,7 @@ impl fmt::Display for Value {
             Value::Namespace(ns) => ns.borrow().to_string(),
             Value::Atom(a) => format!("#atom {{:val {}}}", a.borrow().to_string()),
             Value::Error(err) => format_error(err.clone()),
+            Value::Recur(l) => format!("#<recur {:?}>", l),
         };
         write!(f, "{}", s)
     }
@@ -287,6 +522,8 @@ pub fn pr_seq_readability(seq: &Vec<Value>, start: &str, end: &str, join: &str) 
     let strs: Vec<String> = seq.iter().map(|x| x.pr_str()).collect();
     format!("{}{}{}", start, strs.join(join), end)
 }
+
+impl std::panic::UnwindSafe for Value {}
 
 impl Value {
     pub fn pr_str(&self) -> String {
@@ -310,9 +547,20 @@ impl Value {
                     .collect();
                 pr_seq_readability(&l, "{", "}", " ")
             }
+            Value::TreeMap(tm, _) => {
+                let l = tm
+                    .iter()
+                    .flat_map(|(k, v)| vec![k.clone(), v.clone()])
+                    .collect();
+                pr_seq_readability(&l, "{", "}", " ")
+            }
             Value::Set(set, _) => {
                 let strs: Vec<String> = set.iter().map(|x| x.pr_str()).collect();
                 format!("#{{{}}}", strs.join(" "))
+            }
+            Value::TreeSet(set, _) => {
+                let strs: Vec<String> = set.iter().map(|x| x.to_string()).collect();
+                format!("{{{}}}", strs.join(" "))
             }
             Value::Func(f, _) => format!("#<fn {:?}>", f),
             Value::Macro(f, _) => format!("#<macro {:?}>", f),
@@ -326,6 +574,7 @@ impl Value {
             Value::Namespace(ns) => ns.borrow().to_string(),
             Value::Atom(a) => format!("#atom {{:val {}}}", a.borrow().pr_str()),
             Value::Error(err) => format_error(err.clone()),
+            Value::Recur(l) => format!("#<recur {:?}>", l),
         }
     }
 
@@ -343,17 +592,20 @@ impl Value {
             Value::List(_, _) => "List",
             Value::Vector(_, _) => "Vector",
             Value::HashMap(_, _) => "HashMap",
+            Value::TreeMap(_, _) => "TreeMap",
             Value::Set(_, _) => "Set",
+            Value::TreeSet(_, _) => "TreeSet",
             Value::Func(_, _) => "Function",
             Value::Macro(_, _) => "Function",
             Value::Lambda { .. } => "Function",
             Value::Namespace(_) => "Namespace",
             Value::Atom(_) => "Atom",
             Value::Error(_) => "Error",
+            Value::Recur(_) => "Recursive result",
         }
     }
 
-    pub fn apply(&self, args: ExprArgs, env: Rc<Environment>) -> ValueRes {
+    pub fn apply(&self, args: Vec<Value>, env: Rc<Environment>) -> ValueRes {
         match *self {
             Value::Func(f, _) | Value::Macro(f, _) => f(args, env.clone()),
             Value::Lambda {
@@ -366,7 +618,13 @@ impl Value {
                 let arity = args.len();
                 if let Some((a, p)) = core::find_ast_and_params_by_arity(ast_a, params, arity) {
                     let fn_env = env.bind(p, args.clone())?;
-                    return Ok(core::eval((*a).clone(), fn_env)?);
+                    match core::eval((*a).clone(), fn_env) {
+                        Ok(v) => return Ok(v),
+                        Err(e) => {
+                            println!("foo 4 {}", format_error(e.clone()));
+                            return Err(core::process_error(&e, &a));
+                        }
+                    }
                 } // else
                 argument_error!(
                     "Wrong number of arguments ({}) passed to function {}",
@@ -719,10 +977,21 @@ pub fn set_from_vec(v: Vec<Value>) -> Value {
     Value::Set(Rc::new(hashset), None)
 }
 
+pub fn tree_set_from_vec(v: Vec<Value>) -> Value {
+    let hashset: BTreeSet<Value> = v.into_iter().collect(); // Vec to Array
+    Value::TreeSet(Rc::new(hashset), None)
+}
+
 /// Create a HashMap from a vec of Values
 pub fn hash_map_from_vec(kvs: Vec<Value>) -> ValueRes {
     let hm: HashMap<Value, Value> = HashMap::default();
     _assoc(hm, None, kvs)
+}
+
+/// Create a BTreeMap from a vec of Values
+pub fn tree_map_from_vec(kvs: Vec<Value>) -> ValueRes {
+    let tm: BTreeMap<Value, Value> = BTreeMap::default();
+    _assoc_tree_map(tm, None, kvs)
 }
 
 /// Creates a new Value::HashMap from key-value
@@ -730,6 +999,14 @@ pub fn hash_map_from_kv(key: Value, value: Value) -> Value {
     let mut hm: HashMap<Value, Value> = HashMap::default();
     hm.insert(key, value);
     Value::HashMap(Rc::new(hm), None)
+}
+
+pub fn empty_hash_map() -> Value {
+    Value::HashMap(Rc::new(HashMap::new()), None)
+}
+
+pub fn empty_tree_map() -> Value {
+    Value::TreeMap(Rc::new(BTreeMap::new()), None)
 }
 
 // Create an atom from a Value
@@ -755,7 +1032,7 @@ pub fn symbol(s: &str) -> Value {
 pub fn _assoc(
     mut hm: HashMap<Value, Value>,
     meta: Option<HashMap<Value, Value>>,
-    kvs: ExprArgs,
+    kvs: Vec<Value>,
 ) -> ValueRes {
     if kvs.len() % 2 != 0 {
         return error("odd number of elements");
@@ -767,6 +1044,23 @@ pub fn _assoc(
         };
     }
     Ok(Value::HashMap(Rc::new(hm), meta.clone()))
+}
+
+pub fn _assoc_tree_map(
+    mut tm: BTreeMap<Value, Value>,
+    meta: Option<HashMap<Value, Value>>,
+    kvs: Vec<Value>,
+) -> ValueRes {
+    if kvs.len() % 2 != 0 {
+        return error("odd number of elements");
+    }
+    for (k, v) in kvs.iter().tuples() {
+        match k {
+            Value::Str(_) | Value::Keyword(_) => tm.insert(k.clone(), v.clone()),
+            _ => return error(&format!("Key type not supported: {}", k.as_str())),
+        };
+    }
+    Ok(Value::TreeMap(Rc::new(tm), meta.clone()))
 }
 
 pub fn _dissoc(
