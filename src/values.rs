@@ -620,10 +620,7 @@ impl Value {
                     let fn_env = env.bind(p, args.clone())?;
                     match core::eval((*a).clone(), fn_env) {
                         Ok(v) => return Ok(v),
-                        Err(e) => {
-                            println!("foo 4 {}", format_error(e.clone()));
-                            return Err(core::process_error(&e, &a));
-                        }
+                        Err(e) => return Err(core::process_error(&e, &a)),
                     }
                 } // else
                 argument_error!(

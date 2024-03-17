@@ -60,10 +60,7 @@ impl Repl {
                     if line.len() > 0 {
                         match self.rep(&line) {
                             Ok(out) => println!("{}", out),
-                            Err(e) => {
-                                println!("foo 10 {}", format_error(e.clone()));
-                                self.handle_error(e)
-                            }
+                            Err(e) => self.handle_error(e),
                         }
                     }
                 }

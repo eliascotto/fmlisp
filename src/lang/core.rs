@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::read_to_string;
 use std::io::{stdin, stdout, Write};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::core;
@@ -13,9 +14,18 @@ use crate::symbol::Symbol;
 use crate::utils::IsOdd;
 use crate::values::LispErr::ErrValue;
 use crate::values::{
-    self, _assoc, _dissoc, error, format_error, func, hash_map_from_vec, list_from_vec, macro_fn,
-    set_from_vec, vector_from_vec, ExprArgs, LispErr, ToValue, Value, ValueRes,
+    self, _assoc, _dissoc, error, func, hash_map_from_vec, list_from_vec, macro_fn, set_from_vec,
+    vector_from_vec, ExprArgs, LispErr, ToValue, Value, ValueRes,
 };
+use crate::var::Var;
+
+// Global counter for gensym ID
+static ID: AtomicI64 = AtomicI64::new(0);
+
+// Return next global ID
+fn next_id() -> i64 {
+    ID.fetch_add(1, Ordering::SeqCst)
+}
 
 /// Macro that receive an Integer and eval the expr.
 /// Returns an error if not Integer received.
@@ -858,30 +868,46 @@ fn set_macro(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
 
     match args[0] {
         Value::Var(ref var) => {
-            let mut new_meta = var.meta().unwrap_or(Rc::new(HashMap::new()));
+            // Duplicate meta from var and set macro=true
+            let mut new_meta: HashMap<Value, Value> = match var.meta() {
+                Some(meta) => (*meta).clone(),
+                None => HashMap::new(),
+            };
             new_meta.insert(values::keyword("macro"), Value::Bool(true));
-            var.with_meta(new_meta);
+            var.with_meta(Rc::new(new_meta.clone()));
 
+            // Check that value is pointing to a Lambda value
             let val = env.get_symbol_value(&var.sym).unwrap();
             match &*val {
                 Value::Lambda {
                     ast, env, params, ..
                 } => {
+                    // Create a new Lambda, a new Var and set it into the namespace
                     let new_val = Value::Lambda {
                         ast: ast.clone(),
                         env: env.clone(),
                         params: params.clone(),
                         is_macro: true,
-                        meta: Some((*new_meta).clone()),
+                        meta: Some(new_meta.clone()),
                     };
-                    env.insert(var.sym, Rc::new(new_val));
-                    Ok(Value::Var(*var))
+                    let new_var =
+                        Value::Var(Var::new(var.ns.clone(), var.sym.clone(), Rc::new(new_val)));
+                    env.insert(var.sym.clone(), Rc::new(new_var));
+                    // Return the var
+                    Ok(Value::Var(var.clone()))
                 }
                 _ => return error_fmt!("set-macro requires a Var pointing to a fn"),
             }
         }
         _ => error_fmt!("set-macro requires a Var"),
     }
+}
+
+fn next_id_func(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if !args.is_empty() {
+        return argument_error!("next-id expects no arguments");
+    }
+    Ok(Value::Integer(next_id()))
 }
 
 /// Returns a vector of string/values.
@@ -1020,6 +1046,8 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("intern", func(intern)),
         ("print-debug", macro_fn(print_debug)),
         ("load-file", func(load_file_fn)),
+        ("set-macro", func(set_macro)),
+        ("next-id", func(next_id_func)),
         // ERROR HANDLING
         ("throw", func(throw)),
         ("error", func(error_fn)),

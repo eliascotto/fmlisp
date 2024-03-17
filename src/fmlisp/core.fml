@@ -220,14 +220,19 @@
   ^{:arglists '([x m])
     :doc "Returns an object of the same type and value as `x`, with
     map m as its metadata."
-    :added "1.0"
-    :static true}
+    :added "1.0"}
   with-meta fmlisp.lang/with-meta)
 
-(def println fmlisp.lang/println)
+(def
+   ^{:arglist '([var])
+     :doc "Turns the Var from a function to a Macro."
+     :added "1.0"}
+  set-macro fmlisp.lang/set-macro)
 
 (def ^{:private true :dynamic true}
   assert-valid-fdecl (fn [fdecl]))
+
+(def println fmlisp.lang/println)
 
 (def
   ^{:private true}
@@ -237,10 +242,6 @@
     (let [asig
           (fn [fdecl]
             (let [arglist (first fdecl)
-                 ;elide implicit macro args
-                  arglist (if (fmlisp.lang/= '&form (first arglist))
-                            (fmlisp.lang/subvec arglist 2 (fmlisp.lang/count arglist))
-                            arglist)
                   body (next fdecl)]
               (if (map? (first body))
                 (if (next body)
@@ -410,11 +411,112 @@
                             d))]
                (list 'do
                      (cons `defn decl)
-                     (list 'set-macro (list 'var name))
-                     (list 'var name)))))
+                     (list 'set-macro (list 'var name))))))
 
 (defmacro when
   "Evaluates test. If logical true, evaluates body in an implicit do."
   {:added "1.0"}
   [test & body]
   (list 'if test (cons 'do body)))
+
+(defmacro when-not
+  "Evaluates test. If logical false, evaluates body in an implicit do."
+  {:added "1.0"}
+  [test & body]
+    (list 'if test nil (cons 'do body)))
+
+(def false?
+  "Returns true if x is the value false, false otherwise."
+  {:tag Boolean,
+   :added "1.0"
+   :static true}
+  fmlisp.lang/false?)
+
+(def true?
+  "Returns true if x is the value true, false otherwise."
+  {:tag Boolean,
+   :added "1.0"
+   :static true}
+  fmlisp.lang/true)
+
+(defn boolean?
+  "Return true if x is a Boolean"
+  {:added "1.9"}
+  [x] (is? 'Boolean x))
+
+(defn not
+  "Returns true if x is logical false, false otherwise."
+  {:tag Boolean
+   :added "1.0"
+   :static true}
+  [x] (if x false true))
+
+(defn some?
+  "Returns true if x is not nil, false otherwise."
+  {:tag Boolean
+   :added "1.6"
+   :static true}
+  [x] (not (nil? x)))
+
+(defn any?
+  "Returns true given any argument."
+  {:tag Boolean
+   :added "1.9"}
+  [x] true)
+
+(def str
+  "With no args, returns the empty string. With one arg x, returns
+  x.toString().  (str nil) returns the empty string. With more than
+  one arg, returns the concatenation of the str values of the args."
+  {:tag String
+   :added "1.0"
+   :static true}
+  fmlisp.lang/str)
+
+(defn symbol?
+  "Return true if x is a Symbol"
+  {:added "1.0"
+   :static true}
+  [x] (is? 'Symbol x))
+
+(defn keyword?
+  "Return true if x is a Keyword"
+  {:added "1.0"
+   :static true}
+  [x] (is? 'Keyword x))
+
+(defmacro cond
+  "Takes a set of test/expr pairs. It evaluates each test one at a
+  time.  If a test returns logical true, cond evaluates and returns
+  the value of the corresponding expr and doesn't evaluate any of the
+  other tests or exprs. (cond) returns nil."
+  {:added "1.0"}
+  [& clauses]
+    (when clauses
+      (list 'if (first clauses)
+            (if (next clauses)
+                (second clauses)
+                (throw (error "cond requires an even number of forms")))
+            (cons 'fmlisp.core/cond (next (next clauses))))))
+
+(defn symbol
+  "Returns a Symbol with the given namespace and name. Arity-1 works
+  on strings, keywords, and vars."
+  {:tag clojure.lang.Symbol
+   :added "1.0"
+   :static true}
+  ([name]
+     (cond
+      (symbol? name) name
+      (string? name) (fmlisp.lang/symbol name)
+      :else (throw (error "no conversion to symbol available"))))
+  ([ns name] (fmlisp.lang/intern ns name)))
+
+(defn gensym
+  "Returns a new symbol with a unique name. If a prefix string is
+  supplied, the name is prefix# where # is some unique number. If
+  prefix is not supplied, the prefix is 'G__'."
+  {:added "1.0"
+   :static true}
+  ([] (gensym "G__"))
+  ([prefix-string] (fmlisp.lang/intern (str prefix-string (str (fmlisp.lang/next-id))))))
