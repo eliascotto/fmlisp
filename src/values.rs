@@ -1017,8 +1017,13 @@ pub fn string(s: &str) -> Value {
 }
 
 // Creates a keyword from a string
-pub fn keyword(s: &str) -> Value {
-    Value::Keyword(key!(s))
+pub fn keyword(k: &str) -> Value {
+    Value::Keyword(key!(k))
+}
+
+// Creates a keyword from a string with ns
+pub fn keyword_with_ns(k: &str, ns: &str) -> Value {
+    Value::Keyword(Keyword::new_with_ns(ns, k))
 }
 
 // Creates a symbol from a string

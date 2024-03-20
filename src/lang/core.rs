@@ -537,18 +537,6 @@ fn conj(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     }
 }
 
-fn keyword(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    match a[0] {
-        Value::Str(ref s) => Ok(values::keyword(&(*s))),
-        Value::Symbol(ref s) => Ok(values::keyword(&(*s.name()))),
-        Value::Keyword(ref k) => Ok(Value::Keyword(k.clone())),
-        _ => error(&format!(
-            "keyword not supported on this type: {}",
-            a[0].as_str()
-        )),
-    }
-}
-
 fn seq(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     match a[0] {
         Value::List(ref v, _) | Value::Vector(ref v, _) if v.len() == 0 => Ok(Value::Nil),
@@ -759,6 +747,45 @@ fn private_q(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     }
 }
 
+fn keyword(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() < 1 {
+        return error("Wrong number of arguments passed to keyword. Expecting at least 1");
+    }
+    match args[0] {
+        Value::Str(ref s) => {
+            if args.len() > 1 {
+                match args[1] {
+                    Value::Str(ref ns) => Ok(values::keyword_with_ns(&(*ns), &(*s))),
+                    _ => error(&format!(
+                        "keyword namespace should be a string, received: {}",
+                        args[0].as_str()
+                    )),
+                }
+            } else {
+                Ok(values::keyword(&(*s)))
+            }
+        }
+        Value::Symbol(ref s) => {
+            if args.len() > 1 {
+                match args[1] {
+                    Value::Str(ref ns) => Ok(values::keyword_with_ns(&(*ns), &(*s.name()))),
+                    _ => error(&format!(
+                        "keyword namespace should be a string, received: {}",
+                        args[0].as_str()
+                    )),
+                }
+            } else {
+                Ok(values::keyword(&(*s.name())))
+            }
+        }
+        Value::Keyword(ref k) => Ok(Value::Keyword(k.clone())),
+        _ => error(&format!(
+            "keyword not supported on this type: {}",
+            args[0].as_str()
+        )),
+    }
+}
+
 /// Finds or creates a var named by the symbol name in the namespace
 /// ns (which can be a symbol or a namespace), setting its root binding
 /// to val if supplied. The namespace must exist. The var will adopt any
@@ -910,6 +937,14 @@ fn next_id_func(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     Ok(Value::Integer(next_id()))
 }
 
+fn compare(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 2 {
+        return argument_error!("Wrong number of arguments passed to compare. Expecting 2");
+    }
+
+    Ok(Value::Integer(args[0].cmp(&args[1]) as i64))
+}
+
 /// Returns a vector of string/values.
 pub fn internal_symbols(env: &Environment) -> Vec<(&'static str, Value)> {
     vec![("*ns*", {
@@ -1048,6 +1083,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("load-file", func(load_file_fn)),
         ("set-macro", func(set_macro)),
         ("next-id", func(next_id_func)),
+        ("compare", func(compare)),
         // ERROR HANDLING
         ("throw", func(throw)),
         ("error", func(error_fn)),

@@ -96,7 +96,7 @@ impl Default for Repl {
     fn default() -> Repl {
         let repl = Repl::new();
 
-        core::load_core(repl.environment.clone()); // Load language core
+        core::load_lang_core(repl.environment.clone()); // Load language core
 
         repl
     }

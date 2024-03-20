@@ -520,3 +520,79 @@
    :static true}
   ([] (gensym "G__"))
   ([prefix-string] (fmlisp.lang/intern (str prefix-string (str (fmlisp.lang/next-id))))))
+
+(defn keyword
+  "Returns a Keyword with the given namespace and name.  Do not use :
+  in the keyword strings, it will be added automatically."
+  {:added "1.0"}
+  ([name] (cond (keyword? name) name
+                (symbol? name) (fmlisp.lang/keyword name)
+                (string? name) (fmlisp.lang/keyword name)))
+  ([ns name] (fmlisp.lang/keyword ns name)))
+
+(defn spread
+  {:private true
+   :static true}
+  [arglist]
+  (cond
+   (nil? arglist) nil
+   (nil? (next arglist)) (seq (first arglist))
+   :else (cons (first arglist) (spread (next arglist)))))
+
+(def apply
+  "Applies fn f to the argument list formed by prepending intervening arguments to args."
+  {:added "1.0"}
+  fmlisp.lang/apply
+
+(defn vary-meta
+ "Returns an object of the same type and value as obj, with
+  (apply f (meta obj) args) as its metadata."
+ {:added "1.0"
+   :static true}
+ [obj f & args]
+  (with-meta obj (apply f (meta obj) args)))
+
+(defmacro if-not
+  "Evaluates test. If logical false, evaluates and returns then expr,
+  otherwise else expr, if supplied, else nil."
+  {:added "1.0"}
+  ([test then] `(if-not ~test ~then nil))
+  ([test then else]
+   `(if (not ~test) ~then ~else)))
+
+(defn =
+  "Equality. Returns true if x equals y, false if not. Same as
+  Java x.equals(y) except it also works for nil, and compares
+  numbers and collections in a type-independent manner.  Clojure's immutable data
+  structures define equals() (and thus =) as a value, not an identity,
+  comparison."
+  {:added "1.0"}
+  ([x] true)
+  ([x y] (fmlisp.lang/= x y))
+  ([x y & more]
+   (if (fmlisp.lang/= x y)
+     (if (next more)
+       (= y (first more) (next more))
+       (fmlisp.lang/= y (first more)))
+     false)))
+
+(defn not=
+  "Same as (not (= obj1 obj2))"
+  {:tag Boolean
+   :added "1.0"
+   :static true}
+  ([x] false)
+  ([x y] (not (= x y)))
+  ([x y & more]
+   (not (apply = x y more))))
+
+(defn compare
+  "Comparator. Returns a negative number, zero, or a positive number
+  when x is logically 'less than', 'equal to', or 'greater than'
+  y. Same as Java x.compareTo(y) except it also works for nil, and
+  compares numbers and collections in a type-independent manner. x
+  must implement Comparable"
+  {
+   :inline (fn [x y] `(. clojure.lang.Util compare ~x ~y))
+   :added "1.0"}
+  [x y] (fmlisp.lang/compare x y))

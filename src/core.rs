@@ -24,6 +24,8 @@ fn load_file(path: &str, env: Rc<Environment>) {
             LispErr::Error(err) => {
                 let prefix = if let Some(details) = err.details() {
                     format!("Error {} at {}", details, path)
+                } else if let Some(at) = err.info.get(&String::from("at")) {
+                    format!("Error at {} {}", path, at)
                 } else {
                     format!("Error at {}", path)
                 };
@@ -43,8 +45,9 @@ fn load_file(path: &str, env: Rc<Environment>) {
     }
 }
 
-/// Load the core functions and symbols into the namespace
-pub fn load_core(env: Rc<Environment>) {
+/// Load the language core functions and symbols into the namespace,
+/// also reads the fmlisp libraries files.
+pub fn load_lang_core(env: Rc<Environment>) {
     env.change_or_create_namespace(&sym!("fmlisp.lang"));
 
     // Loading internal definitions
@@ -67,7 +70,7 @@ pub fn load_core(env: Rc<Environment>) {
     }
 
     // Load language file
-    load_file("src/fmlisp/core.fml", env.clone());
+    load_file("src/fmlisp/test.fml", env.clone());
 
     // Change to default user namespace
     env.change_or_create_namespace(&Symbol::new("user"));
@@ -97,7 +100,8 @@ pub fn process_error(e: &LispErr, ast: &Value) -> LispErr {
     }
 }
 
-fn qq_iter(elts: &ExprArgs, env: Rc<Environment>) -> Value {
+// ex qq_iter
+fn traverse_list_iter(elts: &ExprArgs, env: Rc<Environment>) -> Value {
     let mut acc = list![];
     for elt in elts.iter().rev() {
         if let Value::List(v, _) = elt {
@@ -129,9 +133,9 @@ fn quasiquote(ast: &Value, env: Rc<Environment>) -> Value {
                     }
                 }
             }
-            qq_iter(&v, env)
+            traverse_list_iter(&v, env)
         }
-        Value::Vector(v, _) => list![Value::Symbol(sym!("vec")), qq_iter(&v, env)],
+        Value::Vector(v, _) => list![Value::Symbol(sym!("vec")), traverse_list_iter(&v, env)],
         Value::Symbol(mut sym) => {
             sym.ns = Some(env.get_current_namespace_name());
             list![Value::Symbol(sym!("quote")), Value::Symbol(sym)]
@@ -284,7 +288,7 @@ fn eval_ast(ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispErr> {
     }
 }
 
-fn get_meta_key(meta: Option<HashMap<Value, Value>>, key: Value) -> Option<Value> {
+fn get_var_meta_value(meta: Option<HashMap<Value, Value>>, key: Value) -> Option<Value> {
     match meta {
         Some(m) => m.get(&key).cloned(),
         None => None,
@@ -293,10 +297,10 @@ fn get_meta_key(meta: Option<HashMap<Value, Value>>, key: Value) -> Option<Value
 
 /// Return a Value that is the body of the Lambda, or Nil.
 /// Supports the extraction of multiple forms in the body.
-fn get_body_definitions(args: Vec<Value>) -> Rc<Value> {
+fn get_fn_body_defs(args: Vec<Value>) -> Rc<Value> {
     if args.len() > 1 {
         // Let's wrap multiple forms body into a `do` func.
-        // It's only in the interpreter for the moment.
+        // Interpreter internal for the moment.
         let mut defs = vec![symbol("do")];
         defs.extend(args.into_iter().map(|v| v.clone()));
         Rc::new(list_from_vec(defs))
@@ -307,8 +311,8 @@ fn get_body_definitions(args: Vec<Value>) -> Rc<Value> {
     }
 }
 
-fn calc_arity(params: Rc<Vec<Value>>) -> usize {
-    let mut len: usize = 0;
+fn compute_fn_arity(params: Rc<Vec<Value>>) -> usize {
+    let mut arity: usize = 0;
     for p in params.iter() {
         match p {
             Value::Symbol(sym) => {
@@ -316,7 +320,7 @@ fn calc_arity(params: Rc<Vec<Value>>) -> usize {
                     // If & let's just use the max value available
                     return usize::MAX;
                 }
-                len += 1;
+                arity += 1;
             }
             _ => panic!(
                 "Expected a vector of symbols for arguments, found {:?}",
@@ -324,7 +328,7 @@ fn calc_arity(params: Rc<Vec<Value>>) -> usize {
             ),
         }
     }
-    len
+    arity
 }
 
 // Returns a tuple ast-params based on the function's arity needed
@@ -337,7 +341,7 @@ pub fn find_ast_and_params_by_arity(
     // Then use the corresponding params and ast for executing the Lambda.
     for (index, param) in params.iter().enumerate() {
         if let Value::Vector(v, _) = &**param {
-            if calc_arity(v.clone()) >= arity {
+            if compute_fn_arity(v.clone()) >= arity {
                 return Some((ast[index].clone(), params[index].clone()));
             }
         }
@@ -450,9 +454,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                         ast, env, params, ..
                                     } => {
                                         // Redefine a function to catch is it's a macro or not
-                                        let is_macro =
-                                            get_meta_key(Some(sym_meta.clone()), keyword("macro"))
-                                                == Some(Value::Bool(true));
+                                        let is_macro = get_var_meta_value(
+                                            Some(sym_meta.clone()),
+                                            keyword("macro"),
+                                        ) == Some(Value::Bool(true));
 
                                         let new_val = Value::Lambda {
                                             ast: ast.clone(),
@@ -702,7 +707,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 let params = args[args_idx].clone();
                                 args_idx += 1;
                                 // Then function body
-                                let lambda_body = get_body_definitions(args[args_idx..].to_vec());
+                                let lambda_body = get_fn_body_defs(args[args_idx..].to_vec());
                                 ast_v.push(lambda_body);
                                 params_v.push(Rc::new(params));
                             }
@@ -722,7 +727,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                             //   ([a] (test a nil))
                                             //   ([a val] (operation a nil)))
                                             params_v.push(Rc::new(l[0].clone()));
-                                            ast_v.push(get_body_definitions(l[1..].to_vec()));
+                                            ast_v.push(get_fn_body_defs(l[1..].to_vec()));
                                         }
                                         _ => {
                                             return error!(format!(

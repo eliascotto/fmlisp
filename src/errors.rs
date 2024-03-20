@@ -1,4 +1,6 @@
 use crate::values::{self, Value};
+use std::borrow::BorrowMut;
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};
 
@@ -10,6 +12,7 @@ pub struct Error {
     trace: Vec<Box<Value>>,
     kind: Option<String>,    // type
     details: Option<String>, // extra error message details
+    pub info: HashMap<String, String>,
 }
 
 impl Error {
@@ -19,6 +22,7 @@ impl Error {
             trace: vec![],
             kind: None,
             details: None,
+            info: HashMap::new(),
         }
     }
 
@@ -28,6 +32,7 @@ impl Error {
             trace: vec![],
             kind: Some(String::from(kind)),
             details: None,
+            info: HashMap::new(),
         }
     }
 
@@ -114,6 +119,10 @@ impl Error {
             })
             .collect::<Vec<String>>();
         v.join("\n")
+    }
+
+    pub fn add_info(&mut self, key: &str, value: String) {
+        self.info.insert(String::from(key), value);
     }
 }
 

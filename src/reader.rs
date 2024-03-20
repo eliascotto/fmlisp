@@ -1,11 +1,12 @@
 use regex::{Captures, Regex};
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use crate::keyword::Keyword;
 use crate::symbol::Symbol;
 use crate::values::LispErr::ErrString;
 use crate::values::{
-    error, hash_map_from_kv, hash_map_from_vec, list_from_vec, set_from_vec, vector_from_vec,
+    self, error, hash_map_from_kv, hash_map_from_vec, list_from_vec, set_from_vec, vector_from_vec,
     LispErr, ToValue, Value, ValueRes,
 };
 
@@ -16,53 +17,72 @@ struct Reader {
 
 impl Reader {
     fn next(&mut self) -> Result<String, LispErr> {
+        let token = match self.tokens.get(self.pos) {
+            Some(t) => t.clone(),
+            None => return Err(ErrString("underflow".to_string())),
+        };
+
         self.pos += 1;
-        Ok(self
-            .tokens
-            .get(self.pos - 1)
-            // Ok keep processing, otherwise propagate the ErrString back to the caller
-            .ok_or(ErrString("underflow".to_string()))?
-            .to_string())
+        Ok(token)
     }
 
     fn peek(&self) -> Result<String, LispErr> {
         Ok(self
             .tokens
             .get(self.pos)
-            // Ok keep processing, otherwise propagate the ErrString back to the caller
             .ok_or(ErrString("underflow".to_string()))?
             .to_string())
     }
 }
 
-pub fn tokenize(s: &str) -> Vec<String> {
-    let re: Regex =
+//
+// REGEX are static
+//
+pub fn int_regex() -> &'static Regex {
+    static INT_RE: OnceLock<Regex> = OnceLock::new();
+    INT_RE.get_or_init(|| Regex::new(r"^-?\[0-9\]+$").unwrap())
+}
+pub fn float_regex() -> &'static Regex {
+    static FLOAT_RE: OnceLock<Regex> = OnceLock::new();
+    FLOAT_RE.get_or_init(|| Regex::new(r"^-?\\d+(\\.\\d+)?$").unwrap())
+}
+pub fn str_regex() -> &'static Regex {
+    static STR_RE: OnceLock<Regex> = OnceLock::new();
+    STR_RE.get_or_init(|| Regex::new(r#""(?:\\\\.|\[^\\\\"\])\*""#).unwrap())
+}
+pub fn unescape_regex() -> &'static Regex {
+    static UN_RE: OnceLock<Regex> = OnceLock::new();
+    UN_RE.get_or_init(|| Regex::new(r#"\\(.)"#).unwrap())
+}
+pub fn tokens_regex() -> &'static Regex {
+    static TOKEN_RE: OnceLock<Regex> = OnceLock::new();
+    TOKEN_RE.get_or_init(|| {
         Regex::new(r###"[\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]+)"###)
-            .unwrap();
+            .unwrap()
+    })
+}
 
+pub fn tokenize(s: &str) -> Vec<String> {
     let mut res = vec![];
-    for cap in re.captures_iter(s) {
+    for cap in tokens_regex().captures_iter(s) {
         if cap[1].starts_with(";") {
             continue;
         }
+        println!("{}", String::from(&cap[1]));
         res.push(String::from(&cap[1]));
     }
     res
 }
 
 fn unescape_str(s: &str) -> String {
-    let re: Regex = Regex::new(r#"\\(.)"#).unwrap();
-    re.replace_all(&s, |caps: &Captures| {
-        format!("{}", if &caps[1] == "n" { "\n" } else { &caps[1] })
-    })
-    .to_string()
+    unescape_regex()
+        .replace_all(&s, |caps: &Captures| {
+            format!("{}", if &caps[1] == "n" { "\n" } else { &caps[1] })
+        })
+        .to_string()
 }
 
 fn read_atom(r: &mut Reader) -> ValueRes {
-    let int_re: Regex = Regex::new(r"^-?[0-9]+$").unwrap();
-    let float_re: Regex = Regex::new(r"^-?\d+(\.\d+)?$").unwrap();
-    let str_re: Regex = Regex::new(r#""(?:\\.|[^\\"])*""#).unwrap();
-
     let token = r.next()?;
 
     // Using &token[..] to match against a reference to the string
@@ -71,11 +91,11 @@ fn read_atom(r: &mut Reader) -> ValueRes {
         "false" => Ok(Value::Bool(false)),
         "true" => Ok(Value::Bool(true)),
         _ => {
-            if int_re.is_match(&token) {
+            if int_regex().is_match(&token) {
                 Ok(Value::Integer(token.parse().unwrap()))
-            } else if float_re.is_match(&token) {
+            } else if float_regex().is_match(&token) {
                 Ok(Value::Float(token.parse().unwrap()))
-            } else if str_re.is_match(&token) {
+            } else if str_regex().is_match(&token) {
                 Ok(Value::Str(unescape_str(&token[1..token.len() - 1])))
             } else if token.starts_with("\"") {
                 error("expected '\"', got EOF")
@@ -103,12 +123,17 @@ enum CollType {
 
 fn read_seq(r: &mut Reader, end: &str, coll_type: CollType) -> ValueRes {
     let mut seq: Vec<Value> = vec![];
-    r.next()?; // remove the seq start
+    r.next()?; // remove the seq start (open paren)
 
     loop {
         let token: String = match r.peek() {
             Ok(t) => t,
-            Err(_) => return error(&format!("Expected {} got EOF", end)),
+            Err(_) => {
+                let msg = format!("Expected {} got EOF", end);
+                let mut err = crate::errors::Error::new_from_str(msg);
+                // err.add_info("at", format!("line {} col {}", r.line, r.col));
+                return Err(values::LispErr::Error(err));
+            }
         };
         if token == end {
             break;
