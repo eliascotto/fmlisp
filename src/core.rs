@@ -80,7 +80,7 @@ pub fn load_lang_core(env: Rc<Environment>) {
 
 /// Transform string into a FMLisp Value.
 pub fn read(s: &str) -> ValueRes {
-    reader::read_str(s.to_string())
+    reader::read_str(s.to_string(), false)
 }
 
 /// Transform the Value to string.

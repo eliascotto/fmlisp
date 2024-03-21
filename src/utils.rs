@@ -57,3 +57,23 @@ macro_rules! backtrace {
         println!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
     };
 }
+
+/// Returns the first character of `s` as String
+pub fn str_first(s: &str) -> String {
+    s.chars().next().unwrap().to_string()
+}
+
+/// Returns the last character of `s` as String
+pub fn str_last(s: &str) -> String {
+    s.chars().rev().next().unwrap().to_string()
+}
+
+pub fn count_char_occurrences(s: &str, c: char) -> usize {
+    let mut count = 0;
+    for char in s.chars() {
+        if char == c {
+            count += 1;
+        }
+    }
+    count
+}

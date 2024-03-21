@@ -4,34 +4,43 @@ use std::sync::OnceLock;
 
 use crate::keyword::Keyword;
 use crate::symbol::Symbol;
+use crate::utils::{self, str_first};
 use crate::values::LispErr::ErrString;
 use crate::values::{
     self, error, hash_map_from_kv, hash_map_from_vec, list_from_vec, set_from_vec, vector_from_vec,
     LispErr, ToValue, Value, ValueRes,
 };
 
-struct Reader {
-    tokens: Vec<String>,
-    pos: usize,
+struct Token {
+    tok: String,
+    row: usize,
+    col: usize,
+}
+
+pub struct Reader {
+    // Using a vec of a vec of tokens, so every sexpr is a vector of tokens.
+    tokens: Vec<Vec<Token>>,
+    pos: usize,  // position counter inside the sexpr
+    form: usize, // position counter of the current form
 }
 
 impl Reader {
-    fn next(&mut self) -> Result<String, LispErr> {
-        let token = match self.tokens.get(self.pos) {
-            Some(t) => t.clone(),
-            None => return Err(ErrString("underflow".to_string())),
-        };
+    fn next(&mut self) -> Result<&Token, LispErr> {
+        if self.pos >= self.tokens[self.form].len() {
+            self.pos = 0;
+            self.form += 1;
+        }
 
         self.pos += 1;
+        let token = self.peek()?;
         Ok(token)
     }
 
-    fn peek(&self) -> Result<String, LispErr> {
-        Ok(self
-            .tokens
-            .get(self.pos)
-            .ok_or(ErrString("underflow".to_string()))?
-            .to_string())
+    fn peek(&self) -> Result<&Token, LispErr> {
+        match self.tokens[self.form].get(self.pos - 1) {
+            Some(t) => return Ok(t),
+            None => return Err(ErrString("underflow".to_string())),
+        };
     }
 }
 
@@ -62,16 +71,61 @@ pub fn tokens_regex() -> &'static Regex {
     })
 }
 
-pub fn tokenize(s: &str) -> Vec<String> {
-    let mut res = vec![];
-    for cap in tokens_regex().captures_iter(s) {
-        if cap[1].starts_with(";") {
-            continue;
+pub fn tokenize(s: &str, multi_form: bool) -> Reader {
+    let mut temp_s = s.to_string();
+    let mut tokens = vec![];
+    let mut col: usize = 0;
+    let mut row: usize = 0;
+    let mut tot_len = 0;
+
+    // Looping here since `captures_iter` currently only matches
+    // the first occurrence of a sexpr, so we keep interating
+    // on the same string if multi-form is enabled.
+    loop {
+        let mut tok_v = vec![];
+        let mut last_match_end = 0;
+
+        for cap in tokens_regex().captures_iter(temp_s.as_str()) {
+            let tok_str = &cap[1];
+            if tok_str.starts_with(";") {
+                continue; //  comment form
+            }
+
+            // Count newlines if it's not a string to get the current row number
+            if str_first(tok_str) != "\"" {
+                let nl_count = utils::count_char_occurrences(&cap[0], '\n');
+                row += nl_count;
+            }
+            // Count both spaces and characters
+            col += &cap[0].replace("\n", "").len();
+
+            let tok = Token {
+                tok: String::from(tok_str),
+                row,
+                col,
+            };
+            tok_v.push(tok);
+            // Save the capture end
+            last_match_end = cap.get(0).unwrap().end();
         }
-        println!("{}", String::from(&cap[1]));
-        res.push(String::from(&cap[1]));
+
+        tot_len += last_match_end;
+
+        if tot_len >= s.len() || multi_form == false {
+            // if we finish iterating on the string, or multiform is not enabled
+            break;
+        } else {
+            tokens.push(tok_v);
+            // Reduce the current string when starting from the total
+            temp_s = temp_s[tot_len..].to_string();
+        }
     }
-    res
+
+    Reader {
+        tokens,
+        pos: 0,
+        form: 0,
+    }
 }
 
 fn unescape_str(s: &str) -> String {
@@ -86,11 +140,12 @@ fn read_atom(r: &mut Reader) -> ValueRes {
     let token = r.next()?;
 
     // Using &token[..] to match against a reference to the string
-    match &token[..] {
+    match token.tok.as_str() {
         "nil" => Ok(Value::Nil),
         "false" => Ok(Value::Bool(false)),
         "true" => Ok(Value::Bool(true)),
         _ => {
+            let token = token.tok.as_str();
             if int_regex().is_match(&token) {
                 Ok(Value::Integer(token.parse().unwrap()))
             } else if float_regex().is_match(&token) {
@@ -127,7 +182,7 @@ fn read_seq(r: &mut Reader, end: &str, coll_type: CollType) -> ValueRes {
 
     loop {
         let token: String = match r.peek() {
-            Ok(t) => t,
+            Ok(t) => t.tok.clone(),
             Err(_) => {
                 let msg = format!("Expected {} got EOF", end);
                 let mut err = crate::errors::Error::new_from_str(msg);
@@ -151,7 +206,7 @@ fn read_seq(r: &mut Reader, end: &str, coll_type: CollType) -> ValueRes {
 
 fn read_form(r: &mut Reader) -> ValueRes {
     let token = r.peek()?;
-    match &token[..] {
+    match token.tok.as_str() {
         "'" => {
             let _ = r.next();
             Ok(list![Value::Symbol(sym!("quote")), read_form(r)?])
@@ -159,7 +214,7 @@ fn read_form(r: &mut Reader) -> ValueRes {
         "#" => {
             let _ = r.next();
             let next_token = r.peek()?;
-            match &next_token[..] {
+            match next_token.tok.as_str() {
                 // Call var with #'sym
                 "'" => {
                     let _ = r.next();
@@ -167,7 +222,7 @@ fn read_form(r: &mut Reader) -> ValueRes {
                 }
                 // Create a set with #{..}
                 "{" => read_seq(r, "}", CollType::Set),
-                _ => return error!(format!("Wrong token found: {}", next_token)),
+                _ => return error!(format!("Wrong token found: {}", next_token.tok)),
             }
         }
         "`" => {
@@ -218,9 +273,7 @@ fn read_form(r: &mut Reader) -> ValueRes {
     }
 }
 
-pub fn read_str(s: String) -> ValueRes {
-    let tokens = tokenize(&s);
-
-    let mut reader = Reader { tokens, pos: 0 };
+pub fn read_str(s: String, multi_form: bool) -> ValueRes {
+    let mut reader = tokenize(&s, multi_form);
     read_form(&mut reader)
 }

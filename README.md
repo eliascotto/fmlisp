@@ -11,7 +11,7 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 
 ## TODO
 
-- Fix the Reader to include error message with row/col when reading from a file
+- Multiform reader
 - `refer` function
 - `require` with file loading
 - `doc`
