@@ -1,4 +1,5 @@
 use regex::{Captures, Regex};
+use std::fmt;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -11,14 +12,23 @@ use crate::values::{
     LispErr, ToValue, Value, ValueRes,
 };
 
+/// A Token is a string with row,col position inside
+/// the original source.
 struct Token {
     tok: String,
     row: usize,
     col: usize,
 }
 
+impl fmt::Debug for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} ({}, {})", self.tok, self.row, self.col)
+    }
+}
+
+#[derive(Debug)]
 pub struct Reader {
-    // Using a vec of a vec of tokens, so every sexpr is a vector of tokens.
+    // Tokens is a vector of forms which contains tokens
     tokens: Vec<Vec<Token>>,
     pos: usize,  // position counter inside the sexpr
     form: usize, // position counter of the current form
@@ -26,21 +36,39 @@ pub struct Reader {
 
 impl Reader {
     fn next(&mut self) -> Result<&Token, LispErr> {
+        let token = match self.tokens[self.form].get(self.pos) {
+            Some(t) => t,
+            None => return Err(ErrString("underflow".to_string())),
+        };
+
+        self.pos += 1;
         if self.pos >= self.tokens[self.form].len() {
             self.pos = 0;
             self.form += 1;
         }
 
-        self.pos += 1;
-        let token = self.peek()?;
         Ok(token)
     }
 
     fn peek(&self) -> Result<&Token, LispErr> {
-        match self.tokens[self.form].get(self.pos - 1) {
+        match self.tokens[self.form].get(self.pos) {
             Some(t) => return Ok(t),
             None => return Err(ErrString("underflow".to_string())),
         };
+    }
+
+    fn prev(&mut self) {
+        self.pos -= 1;
+        if self.pos <= 0 {
+            self.form -= 1;
+            self.pos = self.tokens[self.form].len() - 1;
+        }
+    }
+
+    /// Returns a tuple `(row,col)`.
+    fn get_tok_pos(&self) -> (usize, usize) {
+        let tok = self.peek().unwrap();
+        (tok.row + 1, tok.col + 1)
     }
 }
 
@@ -49,11 +77,11 @@ impl Reader {
 //
 pub fn int_regex() -> &'static Regex {
     static INT_RE: OnceLock<Regex> = OnceLock::new();
-    INT_RE.get_or_init(|| Regex::new(r"^-?\[0-9\]+$").unwrap())
+    INT_RE.get_or_init(|| Regex::new(r"^\d+$").unwrap())
 }
 pub fn float_regex() -> &'static Regex {
     static FLOAT_RE: OnceLock<Regex> = OnceLock::new();
-    FLOAT_RE.get_or_init(|| Regex::new(r"^-?\\d+(\\.\\d+)?$").unwrap())
+    FLOAT_RE.get_or_init(|| Regex::new(r"^-?\d+(\\.\d+)?$").unwrap())
 }
 pub fn str_regex() -> &'static Regex {
     static STR_RE: OnceLock<Regex> = OnceLock::new();
@@ -71,8 +99,15 @@ pub fn tokens_regex() -> &'static Regex {
     })
 }
 
+/// Returns a Reader instance.
+/// `s` is the source string to extract the tokens,
+/// `multi_form` enable multi form parsing;
+/// helpful if `s` it's meant to be a multi form string
+/// otherwhise only the first form will be tokenized.
 pub fn tokenize(s: &str, multi_form: bool) -> Reader {
-    let mut temp_s = s.to_string();
+    // Trim string to avoid processing ending spaces and \n
+    let trim_s = s.trim();
+    let mut temp_s = trim_s.to_string();
     let mut tokens = vec![];
     let mut col: usize = 0;
     let mut row: usize = 0;
@@ -81,43 +116,57 @@ pub fn tokenize(s: &str, multi_form: bool) -> Reader {
     // Looping here since `captures_iter` currently only matches
     // the first occurrence of a sexpr, so we keep interating
     // on the same string if multi-form is enabled.
+    // The Reader will receive a Vec of Vec<Token>
     loop {
         let mut tok_v = vec![];
         let mut last_match_end = 0;
 
         for cap in tokens_regex().captures_iter(temp_s.as_str()) {
+            let full_str = &cap[0];
             let tok_str = &cap[1];
             if tok_str.starts_with(";") {
-                continue; //  comment form
+                continue; // it's a comment form
             }
 
-            // Count newlines if it's not a string to get the current row number
             if str_first(tok_str) != "\"" {
-                let nl_count = utils::count_char_occurrences(&cap[0], '\n');
-                row += nl_count;
+                // Count newlines if it's not a string to increment the row index
+                let newline_count = utils::count_char_occurrences(full_str, '\n');
+                row += newline_count;
             }
-            // Count both spaces and characters
-            col += &cap[0].replace("\n", "").len();
+            // Count only leading spaces to get the position at the beginning of the token
+            match full_str.rfind('\n') {
+                Some(last_newline) => {
+                    // If new lines are in the token, get the length after the last \n
+                    col = utils::count_leading_whitespace(&full_str[last_newline..]) - 1;
+                }
+                None => {
+                    col += utils::count_leading_whitespace(full_str);
+                }
+            }
 
             let tok = Token {
                 tok: String::from(tok_str),
                 row,
                 col,
             };
+
+            // Increase column by token length
+            col += tok_str.len();
+
             tok_v.push(tok);
             // Save the capture end
             last_match_end = cap.get(0).unwrap().end();
         }
 
         tot_len += last_match_end;
+        tokens.push(tok_v);
 
-        if tot_len >= s.len() || multi_form == false {
+        if tot_len >= trim_s.len() || multi_form == false {
             // if we finish iterating on the string, or multiform is not enabled
             break;
         } else {
-            tokens.push(tok_v);
-            // Reduce the current string when starting from the total
-            temp_s = temp_s[tot_len..].to_string();
+            // Reduce the current string starting from last-match-end index
+            temp_s = temp_s[last_match_end..].to_string();
         }
     }
 
@@ -136,6 +185,14 @@ fn unescape_str(s: &str) -> String {
         .to_string()
 }
 
+fn error_with_pos(err_str: &str, r: &mut Reader) -> Result<Value, LispErr> {
+    r.prev();
+    let mut err = crate::errors::Error::new_from_str(String::from(err_str));
+    let tok_pos = r.get_tok_pos();
+    err.add_info("at", format!("line {} col {}", tok_pos.0, tok_pos.1));
+    return Err(values::LispErr::Error(err));
+}
+
 fn read_atom(r: &mut Reader) -> ValueRes {
     let token = r.next()?;
 
@@ -145,25 +202,28 @@ fn read_atom(r: &mut Reader) -> ValueRes {
         "false" => Ok(Value::Bool(false)),
         "true" => Ok(Value::Bool(true)),
         _ => {
-            let token = token.tok.as_str();
-            if int_regex().is_match(&token) {
-                Ok(Value::Integer(token.parse().unwrap()))
-            } else if float_regex().is_match(&token) {
-                Ok(Value::Float(token.parse().unwrap()))
-            } else if str_regex().is_match(&token) {
-                Ok(Value::Str(unescape_str(&token[1..token.len() - 1])))
-            } else if token.starts_with("\"") {
-                error("expected '\"', got EOF")
-            } else if token.starts_with("\\") {
-                if token.len() == 2 {
-                    Ok(Value::Char(token.chars().nth(1).unwrap() as char))
+            let token_str = token.tok.as_str();
+            if int_regex().is_match(&token_str) {
+                Ok(Value::Integer(token_str.parse().unwrap()))
+            } else if float_regex().is_match(&token_str) {
+                Ok(Value::Float(token_str.parse().unwrap()))
+            } else if str_regex().is_match(&token_str) {
+                Ok(Value::Str(unescape_str(&token_str[1..token_str.len() - 1])))
+            } else if token_str.starts_with("\"") {
+                return error_with_pos("Unexpected String", r);
+            } else if token_str.starts_with("\\") {
+                if token_str.len() == 2 {
+                    Ok(Value::Char(token_str.chars().nth(1).unwrap() as char))
                 } else {
-                    error(&format!("Unsupported character: {}", token))
+                    return error_with_pos(
+                        format!("Unsupported character: {}", token_str).as_str(),
+                        r,
+                    );
                 }
-            } else if token.starts_with(":") {
-                Ok(Value::Keyword(key!(&token[1..].to_string())))
+            } else if token_str.starts_with(":") {
+                Ok(Value::Keyword(key!(&token_str[1..].to_string())))
             } else {
-                Ok(Value::Symbol(sym!(&token.to_string())))
+                Ok(Value::Symbol(sym!(&token_str.to_string())))
             }
         }
     }
@@ -184,10 +244,7 @@ fn read_seq(r: &mut Reader, end: &str, coll_type: CollType) -> ValueRes {
         let token: String = match r.peek() {
             Ok(t) => t.tok.clone(),
             Err(_) => {
-                let msg = format!("Expected {} got EOF", end);
-                let mut err = crate::errors::Error::new_from_str(msg);
-                // err.add_info("at", format!("line {} col {}", r.line, r.col));
-                return Err(values::LispErr::Error(err));
+                return error_with_pos(format!("Expected {} got EOF", end).as_str(), r);
             }
         };
         if token == end {

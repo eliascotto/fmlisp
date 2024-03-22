@@ -727,7 +727,7 @@ fn public_q(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     }
     match args[0] {
         Value::Symbol(ref sym) => {
-            let var = env.get(sym);
+            let var = env.get(sym)?;
             Ok(Value::Bool(!var.is_private()))
         }
         _ => error!("public? requires symbol"),
@@ -740,7 +740,7 @@ fn private_q(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     }
     match args[0] {
         Value::Symbol(ref sym) => {
-            let var = env.get(sym);
+            let var = env.get(sym)?;
             Ok(Value::Bool(var.is_private()))
         }
         _ => error!("private? requires symbol"),
@@ -810,7 +810,7 @@ fn intern(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
                     Value::Nil
                 };
 
-                let v = (*env.get(&sym)).clone();
+                let v = (*env.get(&sym)?).clone();
                 let var = match v {
                     Value::Var(_) => v,
                     _ => {
@@ -904,7 +904,7 @@ fn set_macro(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
             var.with_meta(Rc::new(new_meta.clone()));
 
             // Check that value is pointing to a Lambda value
-            let val = env.get_symbol_value(&var.sym).unwrap();
+            let val = env.get_symbol_value(&var.sym)?.unwrap();
             match &*val {
                 Value::Lambda {
                     ast, env, params, ..

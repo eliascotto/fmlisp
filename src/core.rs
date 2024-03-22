@@ -70,7 +70,7 @@ pub fn load_lang_core(env: Rc<Environment>) {
     }
 
     // Load language file
-    load_file("src/fmlisp/test.fml", env.clone());
+    load_file("src/fmlisp/core.fml", env.clone());
 
     // Change to default user namespace
     env.change_or_create_namespace(&Symbol::new("user"));
@@ -181,16 +181,19 @@ fn is_macro_call(
         Value::List(v, _) => match v[0] {
             Value::Symbol(ref s) => {
                 //
-                match env.get(s).as_ref() {
-                    Value::Var(var) => match &*var.val.borrow().clone() {
-                        f @ Value::Lambda {
-                            is_macro: true,
-                            env: e,
-                            ..
-                        } => Some((f.clone(), v[1..].to_vec(), e.clone(), var.ns.clone())),
+                match env.get(s) {
+                    Ok(z) => match z.as_ref() {
+                        Value::Var(var) => match &*var.val.borrow().clone() {
+                            f @ Value::Lambda {
+                                is_macro: true,
+                                env: e,
+                                ..
+                            } => Some((f.clone(), v[1..].to_vec(), e.clone(), var.ns.clone())),
+                            _ => None,
+                        },
                         _ => None,
                     },
-                    _ => None,
+                    Err(_) => None,
                 }
             }
             _ => None,
@@ -237,14 +240,10 @@ fn macroexpand(mut ast: Value, env: Rc<Environment>) -> (bool, Result<Rc<Value>,
 fn eval_ast(ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, LispErr> {
     match ast.clone() {
         // Symbol returns value in env 'sym ;=> 12
-        Value::Symbol(sym) => match env.get_symbol_value(&sym) {
+        Value::Symbol(sym) => match env.get_symbol_value(&sym)? {
             Some(val) => Ok(val),
             None => {
-                error_fmt!(
-                    "'{}' symbol not found in this context: '{}",
-                    sym.to_string(),
-                    env.get_current_namespace_name()
-                )
+                error_fmt!("'{}' symbol not found in this context", sym.to_string())
             }
         },
         // Vector eval each item [1 2 (+ 2 3)] ;=> [1 2 5]
@@ -877,7 +876,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                         }
                         match args[0].clone() {
                             Value::Symbol(sym) => {
-                                let val = env.get(&sym);
+                                let val = env.get(&sym)?;
                                 match val.as_ref() {
                                     Value::Var(_) => Ok(val.to_rc_value()),
                                     _ => error!("Unable to resolve var"),

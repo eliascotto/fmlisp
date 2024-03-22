@@ -369,30 +369,40 @@ impl Environment {
         }
     }
 
-    /// Get closest value "around" us;  try our local environment, then
-    /// try our main environment (unless its namespace qualified)
-    pub fn get(&self, sym: &Symbol) -> Rc<Value> {
+    /// Get closest value: first try local environment, then
+    /// try our main environment. If symbol is namespace qualified,
+    /// use the namespace, if exists, otherwise use the current ns.
+    pub fn get(&self, sym: &Symbol) -> Result<Rc<Value>, LispErr> {
         match self {
-            Environment::MainEnvironment(env) => {
-                env.get_from_namespace(&env.get_current_namespace_symbol(), &sym)
-            }
+            Environment::MainEnvironment(env) => match sym.ns.clone() {
+                Some(ns) => {
+                    let ns_sym = Symbol::new(ns.as_str());
+                    if env.has_namespace(&ns_sym) {
+                        Ok(env.get_from_namespace(&ns_sym, &sym))
+                    } else {
+                        error_fmt!("Namespace {} not found", ns_sym)
+                    }
+                }
+                None => Ok(env.get_from_current_namespace(&sym)),
+            },
             Environment::LocalEnvironment(parent_env, mappings) => {
                 if sym.ns != None {
-                    return self.get_main_environment().get(sym);
-                }
-                match mappings.borrow().get(sym) {
-                    Some(val) => Rc::clone(val),
-                    None => parent_env.get(sym),
+                    self.get_main_environment().get(sym)
+                } else {
+                    match mappings.borrow().get(sym) {
+                        Some(val) => Ok(Rc::clone(val)),
+                        None => parent_env.get(sym),
+                    }
                 }
             }
         }
     }
 
     /// Returns the value of the Var associated with the Symbol in the current namespace
-    pub fn get_symbol_value(&self, sym: &Symbol) -> Option<Rc<Value>> {
-        match self.get(sym).as_ref() {
-            Value::Var(v) => Some(v.val.borrow().clone()),
-            _ => None,
+    pub fn get_symbol_value(&self, sym: &Symbol) -> Result<Option<Rc<Value>>, LispErr> {
+        match self.get(sym)?.as_ref() {
+            Value::Var(v) => Ok(Some(v.val.borrow().clone())),
+            _ => Ok(None),
         }
     }
 

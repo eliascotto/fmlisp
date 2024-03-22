@@ -296,26 +296,26 @@ impl Namespaces {
     fn try_get(&self, namespace_sym: &Symbol, sym: &Symbol) -> Option<Rc<Value>> {
         // When storing / retrieving from namespaces, we want
         // namespace_sym unqualified keys
-        let mut namespace_sym = namespace_sym.unqualified();
+        let namespace_sym = namespace_sym.unqualified();
         // Ie, a scenario like get(.. , 'clojure.core/+) or get(.., 'shortcut/+)
         let namespaces = self.0.borrow();
 
         // If our sym is namespace qualified, use that as our namespace
-        if sym.has_ns() {
-            let symbols_ns = Symbol::new(&sym.ns.as_ref().unwrap());
-            let ns = namespaces.get(&namespace_sym)?;
+        // if sym.has_ns() {
+        //     let symbols_ns = Symbol::new(&sym.ns.as_ref().unwrap());
+        //     let ns = namespaces.get(&namespace_sym)?;
 
-            // If the namespace has an alias like `sym.ns`, use the source ns instead
-            namespace_sym = if let Some(source_ns) = ns.get_alias(&symbols_ns) {
-                source_ns.clone()
-            } else {
-                symbols_ns
-            };
-        }
+        //     // If the namespace has an alias like `sym.ns`, use the source ns instead
+        //     namespace_sym = if let Some(source_ns) = ns.get_alias(&symbols_ns) {
+        //         source_ns.clone()
+        //     } else {
+        //         symbols_ns
+        //     };
+        // }
 
-        let sym = sym.unqualified();
         let namespace = namespaces.get(&namespace_sym)?;
 
+        let sym = sym.unqualified();
         // If we cannot find the symbol, and its not a direct grab from a specific namespace,
         // we should see if we can find it in one of our referred namespaces or symbols
         namespace.try_get(&sym)

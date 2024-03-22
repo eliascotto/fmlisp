@@ -1,5 +1,6 @@
-(ns ^{:doc "The core FMLisp language."
-      :author "Elia Scotto"}
+(ns
+;^{:doc "The core FMLisp language."
+;      :author "Elia Scotto"}
  fmlisp.core)
 
 (def

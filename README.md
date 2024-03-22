@@ -11,7 +11,7 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 
 ## TODO
 
-- Multiform reader
+- Fix fmlisp.core
 - `refer` function
 - `require` with file loading
 - `doc`

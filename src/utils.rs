@@ -69,10 +69,16 @@ pub fn str_last(s: &str) -> String {
 }
 
 pub fn count_char_occurrences(s: &str, c: char) -> usize {
+    s.chars().filter(|&char| char == c).count()
+}
+
+pub fn count_leading_whitespace(s: &str) -> usize {
     let mut count = 0;
     for char in s.chars() {
-        if char == c {
+        if char.is_whitespace() {
             count += 1;
+        } else {
+            break;
         }
     }
     count
