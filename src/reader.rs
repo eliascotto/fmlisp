@@ -81,11 +81,11 @@ pub fn int_regex() -> &'static Regex {
 }
 pub fn float_regex() -> &'static Regex {
     static FLOAT_RE: OnceLock<Regex> = OnceLock::new();
-    FLOAT_RE.get_or_init(|| Regex::new(r"^-?\d+(\\.\d+)?$").unwrap())
+    FLOAT_RE.get_or_init(|| Regex::new(r"^-?\d+(\.\d+)?$").unwrap())
 }
 pub fn str_regex() -> &'static Regex {
     static STR_RE: OnceLock<Regex> = OnceLock::new();
-    STR_RE.get_or_init(|| Regex::new(r#""(?:\\\\.|\[^\\\\"\])\*""#).unwrap())
+    STR_RE.get_or_init(|| Regex::new(r#""(?:\\.|[^\\"])*""#).unwrap())
 }
 pub fn unescape_regex() -> &'static Regex {
     static UN_RE: OnceLock<Regex> = OnceLock::new();
