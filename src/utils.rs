@@ -83,3 +83,7 @@ pub fn count_leading_whitespace(s: &str) -> usize {
     }
     count
 }
+
+pub fn count_newlines(s: &str) -> usize {
+    s.chars().filter(|c| *c == '\n').count()
+}

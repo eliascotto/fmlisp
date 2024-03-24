@@ -70,6 +70,7 @@ pub fn load_lang_core(env: Rc<Environment>) {
     }
 
     // Load language file
+    // load_file("src/fmlisp/test.fml", env.clone());
     load_file("src/fmlisp/core.fml", env.clone());
 
     // Change to default user namespace
@@ -80,7 +81,7 @@ pub fn load_lang_core(env: Rc<Environment>) {
 
 /// Transform string into a FMLisp Value.
 pub fn read(s: &str) -> ValueRes {
-    reader::read_str(s.to_string(), false)
+    reader::read_str(s.to_string())
 }
 
 /// Transform the Value to string.
@@ -430,22 +431,57 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                 let args = &l[1..].to_vec();
                 match head {
                     Value::Symbol(ref headsym) if headsym.name() == "def" => {
-                        if args.len() < 1 {
+                        if args.is_empty() {
                             return error!(
                                 "Wrong number of arguments given to def. Expecting at least 1"
                             );
                         }
                         match args[0].clone() {
                             Value::Symbol(sym) => {
-                                let value = if args.len() > 1 {
-                                    match eval_to_rc(args[1].clone(), mut_env.borrow().clone()) {
-                                        Ok(v) => v,
-                                        Err(e) => return Err(process_error(&e, &ast)),
+                                let mut docstring: Option<String> = None;
+                                let value = match args.len() {
+                                    // Default initialize to nil
+                                    1 => Value::Nil.to_rc_value(),
+                                    // Second arg is the value
+                                    2 => {
+                                        match eval_to_rc(args[1].clone(), mut_env.borrow().clone())
+                                        {
+                                            Ok(v) => v,
+                                            Err(e) => return Err(process_error(&e, &ast)),
+                                        }
                                     }
-                                } else {
-                                    Value::Nil.to_rc_value()
+                                    // Check if second arg is String, so third arg will be value
+                                    3 => match args[1].clone() {
+                                        Value::Str(doc) => {
+                                            docstring = Some(doc);
+                                            match eval_to_rc(
+                                                args[2].clone(),
+                                                mut_env.borrow().clone(),
+                                            ) {
+                                                Ok(v) => v,
+                                                Err(e) => return Err(process_error(&e, &ast)),
+                                            }
+                                        }
+                                        _ => {
+                                            return error_fmt!(
+                                                "Too many arguments to def ({}), expected 1 to 3",
+                                                args.len()
+                                            )
+                                        }
+                                    },
+                                    _ => {
+                                        return error_fmt!(
+                                            "Too many arguments to def ({}), expected 1 to 3",
+                                            args.len()
+                                        )
+                                    }
                                 };
-                                let sym_meta = sym.meta();
+
+                                let mut sym_meta = sym.meta();
+                                if let Some(dc) = docstring {
+                                    // If docstring has been set, add it to meta hashmap
+                                    sym_meta.insert(keyword("doc"), Value::Str(dc));
+                                }
 
                                 // Copy Meta from symbol into the Lambda definition
                                 let value = match &*value {

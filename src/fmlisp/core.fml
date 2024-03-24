@@ -311,10 +311,11 @@
 								;;(cons `fn fdecl)
                  (with-meta (cons `fn fdecl) {:rettag (:tag m)})))))
 
-(def vector
-  "Creates a new vector containing the args."
-  {:added "1.0"
+(def
+ ^{:added "1.0"
    :static true}
+  vector
+  "Creates a new vector containing the args."
   fmlisp.lang/vector)
 
 (defn vec
@@ -426,19 +427,15 @@
   [test & body]
     (list 'if test nil (cons 'do body)))
 
-(def false?
+(def ^{:added "1.0"}
+  false?
   "Returns true if x is the value false, false otherwise."
-  {:tag Boolean,
-   :added "1.0"
-   :static true}
   fmlisp.lang/false?)
 
-(def true?
+(def ^{:added "1.0"}
+  true?
   "Returns true if x is the value true, false otherwise."
-  {:tag Boolean,
-   :added "1.0"
-   :static true}
-  fmlisp.lang/true)
+  fmlisp.lang/true?)
 
 (defn boolean?
   "Return true if x is a Boolean"
@@ -465,13 +462,14 @@
    :added "1.9"}
   [x] true)
 
-(def str
+(def
+  ^{:tag String
+   :added "1.0"
+   :static true}
+  str
   "With no args, returns the empty string. With one arg x, returns
   x.toString().  (str nil) returns the empty string. With more than
   one arg, returns the concatenation of the str values of the args."
-  {:tag String
-   :added "1.0"
-   :static true}
   fmlisp.lang/str)
 
 (defn symbol?
@@ -540,10 +538,11 @@
    (nil? (next arglist)) (seq (first arglist))
    :else (cons (first arglist) (spread (next arglist)))))
 
-(def apply
+(def
+  ^{:added "1.0"}
+  apply
   "Applies fn f to the argument list formed by prepending intervening arguments to args."
-  {:added "1.0"}
-  fmlisp.lang/apply
+  fmlisp.lang/apply)
 
 (defn vary-meta
  "Returns an object of the same type and value as obj, with

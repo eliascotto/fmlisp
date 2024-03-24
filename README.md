@@ -11,12 +11,12 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 
 ## TODO
 
-- Fix fmlisp.core
 - `refer` function
 - `require` with file loading
 - `doc`
-- Add support for keyword arguments
+- support for custom `struct` implementation and instance
 - Proc Macro to define Rust functions as plugins and load them into FMLisp at the startup
+- Add support for keyword arguments
 - Start UI with GPUI
 - Add ns exploring REPL functions as `ns-intern` (in a REPL namespace?)
 - Lazy evaluation
@@ -41,6 +41,7 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 - Better stacktrace and errors
   - error show on line like rust
 - Static typing?? - if it's worth it
+- Datalog and an easy way to express logic and formality
 
 ## Specials Forms
 

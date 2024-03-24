@@ -68,8 +68,12 @@ pub fn load_file(path: &String, env: Rc<Environment>) -> ValueRes {
         Ok(data) => {
             // We use `do` to read the entire file as a single sexpr
             // let file_data = format!("(do {})", data);
-            let s = reader::read_str(data, true)?;
-            core::eval(s, env.clone())
+            let s_vec = reader::read_str_multiform(data)?;
+            let mut last_val = Value::Nil;
+            for s in s_vec {
+                last_val = core::eval(s, env.clone())?;
+            }
+            Ok(last_val)
         }
         Err(e) => error(&e.to_string()),
     }
@@ -167,7 +171,7 @@ fn read_string(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if a.len() != 1 {
         return error("Wrong number of arguments passed to read-string. Expecting 1");
     }
-    reader::read_str(a[0].to_string(), false)
+    reader::read_str(a[0].to_string())
 }
 
 fn slurp(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
