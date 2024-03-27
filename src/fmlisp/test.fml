@@ -1,3 +1,10 @@
-(def ^{:added "1.0"} false?
-  "Returns true if x is the value false, false otherwise."
-  fmlisp.lang/false?)
+(def
+  ^{:arglist '([var])
+    :doc "Turns the Var from a function to a Macro."
+    :added "1.0"}
+  set-macro fmlisp.lang/set-macro)
+
+(def ^{:private true :dynamic true}
+  assert-valid-fdecl (fn [fdecl]))
+
+(def println fmlisp.lang/println)

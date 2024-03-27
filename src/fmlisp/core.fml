@@ -225,9 +225,9 @@
   with-meta fmlisp.lang/with-meta)
 
 (def
-   ^{:arglist '([var])
-     :doc "Turns the Var from a function to a Macro."
-     :added "1.0"}
+  ^{:arglist '([var])
+    :doc "Turns the Var from a function to a Macro."
+    :added "1.0"}
   set-macro fmlisp.lang/set-macro)
 
 (def ^{:private true :dynamic true}
@@ -308,12 +308,13 @@
            (list 'def (with-meta name m)
                 ;;todo - restore propagation of fn name
                 ;;must figure out how to convey primitive hints to self calls first
-								;;(cons `fn fdecl)
-                 (with-meta (cons `fn fdecl) {:rettag (:tag m)})))))
+                 (cons `fn fdecl)
+                 ;; (with-meta (cons `fn fdecl) {:rettag (:tag m)})
+                 ))))
 
 (def
- ^{:added "1.0"
-   :static true}
+  ^{:added "1.0"
+    :static true}
   vector
   "Creates a new vector containing the args."
   fmlisp.lang/vector)
@@ -366,20 +367,19 @@
   {:tag Boolean
    :added "1.0"
    :static true
-   :inline (fn [x] (list 'fmlisp.lang/nil? x))
-   }
+   :inline (fn [x] (list 'fmlisp.lang/nil? x))}
   [x] (fmlisp.lang/nil? x))
 
 (def
 
- ^{:doc "Like defn, but the resulting function name is declared as a
+  ^{:doc "Like defn, but the resulting function name is declared as a
   macro and will be used as a macro by the compiler when it is
   called."
-   :arglists '([name doc-string? attr-map? [params*] body]
-               [name doc-string? attr-map? ([params*] body)+ attr-map?])
-   :macro true
-   :added "1.0"}
- defmacro (fn [name & args]
+    :arglists '([name doc-string? attr-map? [params*] body]
+                [name doc-string? attr-map? ([params*] body) + attr-map?])
+    :macro true
+    :added "1.0"}
+  defmacro (fn [name & args]
              (let [prefix (loop [p (list name) args args]
                             (let [f (first args)]
                               (if (string? f)
@@ -397,8 +397,8 @@
                            (list fdecl)
                            fdecl)
                    add-implicit-args (fn [fd]
-                             (let [args (first fd)]
-                               (cons (vec args) (next fd))))
+                                       (let [args (first fd)]
+                                         (cons (vec args) (next fd))))
                    add-args (fn [acc ds]
                               (if (nil? ds)
                                 acc
@@ -425,7 +425,7 @@
   "Evaluates test. If logical false, evaluates body in an implicit do."
   {:added "1.0"}
   [test & body]
-    (list 'if test nil (cons 'do body)))
+  (list 'if test nil (cons 'do body)))
 
 (def ^{:added "1.0"}
   false?
@@ -464,8 +464,8 @@
 
 (def
   ^{:tag String
-   :added "1.0"
-   :static true}
+    :added "1.0"
+    :static true}
   str
   "With no args, returns the empty string. With one arg x, returns
   x.toString().  (str nil) returns the empty string. With more than
@@ -491,12 +491,12 @@
   other tests or exprs. (cond) returns nil."
   {:added "1.0"}
   [& clauses]
-    (when clauses
-      (list 'if (first clauses)
-            (if (next clauses)
-                (second clauses)
-                (throw (error "cond requires an even number of forms")))
-            (cons 'fmlisp.core/cond (next (next clauses))))))
+  (when clauses
+    (list 'if (first clauses)
+          (if (next clauses)
+            (second clauses)
+            (throw (error "cond requires an even number of forms")))
+          (cons 'fmlisp.core/cond (next (next clauses))))))
 
 (defn symbol
   "Returns a Symbol with the given namespace and name. Arity-1 works
@@ -505,10 +505,10 @@
    :added "1.0"
    :static true}
   ([name]
-     (cond
-      (symbol? name) name
-      (string? name) (fmlisp.lang/symbol name)
-      :else (throw (error "no conversion to symbol available"))))
+   (cond
+     (symbol? name) name
+     (string? name) (fmlisp.lang/symbol name)
+     :else (throw (error "no conversion to symbol available"))))
   ([ns name] (fmlisp.lang/intern ns name)))
 
 (defn gensym
@@ -534,9 +534,9 @@
    :static true}
   [arglist]
   (cond
-   (nil? arglist) nil
-   (nil? (next arglist)) (seq (first arglist))
-   :else (cons (first arglist) (spread (next arglist)))))
+    (nil? arglist) nil
+    (nil? (next arglist)) (seq (first arglist))
+    :else (cons (first arglist) (spread (next arglist)))))
 
 (def
   ^{:added "1.0"}
@@ -545,11 +545,11 @@
   fmlisp.lang/apply)
 
 (defn vary-meta
- "Returns an object of the same type and value as obj, with
+  "Returns an object of the same type and value as obj, with
   (apply f (meta obj) args) as its metadata."
- {:added "1.0"
+  {:added "1.0"
    :static true}
- [obj f & args]
+  [obj f & args]
   (with-meta obj (apply f (meta obj) args)))
 
 (defmacro if-not
@@ -592,7 +592,76 @@
   y. Same as Java x.compareTo(y) except it also works for nil, and
   compares numbers and collections in a type-independent manner. x
   must implement Comparable"
-  {
-   :inline (fn [x y] `(. clojure.lang.Util compare ~x ~y))
+  {:inline (fn [x y] `(. clojure.lang.Util compare ~x ~y))
    :added "1.0"}
   [x y] (fmlisp.lang/compare x y))
+
+(defmacro and
+  "Evaluates exprs one at a time, from left to right. If a form
+  returns logical false (nil or false), and returns that value and
+  doesn't evaluate any of the other expressions, otherwise it returns
+  the value of the last expr. (and) returns true."
+  {:added "1.0"}
+  ([] true)
+  ([x] x)
+  ([x & next]
+   `(let [and# ~x]
+      (if and# (and ~@next) and#))))
+
+(defmacro or
+  "Evaluates exprs one at a time, from left to right. If a form
+  returns a logical true value, or returns that value and doesn't
+  evaluate any of the other expressions, otherwise it returns the
+  value of the last expression. (or) returns nil."
+  {:added "1.0"}
+  ([] nil)
+  ([x] x)
+  ([x & next]
+   `(let [or# ~x]
+      (if or# or# (or ~@next)))))
+
+(def
+  ^{:arglists '([num])
+    :doc "Returns true if num is zero, else false"
+    :added "1.0"}
+  zero? fmlisp.lang/zero?)
+
+(def
+  ^{:arglists: '([coll])
+    :doc "Returns the number of items in the collection. (count nil) returns
+         0. Also works on strings, sets and Maps"
+    :added "1.0"}
+  count fmlisp.lang/count)
+
+(def
+  ^{:arglists: '([n])
+    :doc "Coerce to int"
+    :added "1.0"}
+  int fmlisp.lang/int)
+
+(defn nth
+  "Returns the value at the index. get returns nil if index out of
+  bounds, nth throws an exception unless not-found is supplied.  nth
+  also works for strings, Java arrays, regex Matchers and Lists, and,
+  in O(n) time, for sequences."
+  {:inline (fn  [c i & nf] `(fmlisp.lang/nth ~c ~i ~@nf))
+   :inline-arities #{2 3}
+   :added "1.0"}
+  ([coll index] (fmlisp.lang/nth coll index))
+  ([coll index not-found] (fmlisp.lang/nth coll index not-found)))
+
+(defn <
+  "Returns non-nil if nums are in monotonically increasing order,
+  otherwise false."
+  {:inline (fn [x y] `(fmlisp.lang/< ~x ~y))
+   :inline-arities #{2}
+   :added "1.0"}
+  ([x] true)
+  ([x y] (fmlisp.lang/< x y))
+  ([x y & more]
+   (if (< x y)
+     (do (println "inside: " more)
+       (if (next more)
+       (< y (first more) (rest more))
+       (< y (first more))))
+     false)))

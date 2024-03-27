@@ -1,5 +1,4 @@
 use crate::values::{self, Value};
-use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
 use std::hash::{Hash, Hasher};

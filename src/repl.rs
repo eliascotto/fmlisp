@@ -6,9 +6,10 @@ use std::rc::Rc;
 
 use crate::core;
 use crate::env::Environment;
+use crate::error_output;
 use crate::symbol::Symbol;
 use crate::values::LispErr;
-use crate::values::{format_error, Value};
+use crate::values::Value;
 
 pub struct Repl {
     environment: Rc<Environment>,
@@ -18,6 +19,17 @@ impl Repl {
     pub fn new() -> Repl {
         Repl {
             environment: Rc::new(Environment::default()),
+        }
+    }
+
+    /// Creates a Repl object with all the standard definitions loaded.
+    pub fn default() -> Result<Repl, LispErr> {
+        let repl = Repl::new();
+
+        // Load language core
+        match core::load_lang_core(repl.environment.clone()) {
+            Ok(_) => Ok(repl),
+            Err(e) => Err(e),
         }
     }
 
@@ -33,7 +45,7 @@ impl Repl {
 
     // Read Eval Print
     pub fn rep(&self, s: &str) -> Result<String, LispErr> {
-        let ast: Value = core::read(s)?;
+        let ast: Value = core::read(s, self.environment.clone())?;
         let exp: Value = core::eval(ast.clone(), self.environment.clone())?;
         Ok(core::print(exp))
     }
@@ -44,7 +56,7 @@ impl Repl {
         if rl.load_history("history").is_err() {}
 
         // Loop calling REP
-        loop {
+        'rep: loop {
             let current_ns_name = self.environment.get_current_namespace_name();
             let readline = rl.readline(&format!("{}> ", current_ns_name));
             match readline {
@@ -60,45 +72,22 @@ impl Repl {
                     if line.len() > 0 {
                         match self.rep(&line) {
                             Ok(out) => println!("{}", out),
-                            Err(e) => self.handle_error(e),
+                            Err(e) => match error_output::eprint(e, "REPL") {
+                                0 => continue 'rep,
+                                -1 => return,
+                                _ => {}
+                            },
                         }
                     }
                 }
-                Err(ReadlineError::Interrupted) => continue,
-                Err(ReadlineError::Eof) => break,
+                Err(ReadlineError::Interrupted) => continue 'rep,
+                Err(ReadlineError::Eof) => break 'rep,
                 Err(err) => {
                     println!("Error: {:?}", err);
-                    break;
+                    break 'rep;
                 }
             }
         }
-    }
-
-    fn handle_error(&self, e: LispErr) {
-        match e {
-            LispErr::Error(err) => {
-                let e = err.clone();
-                let error = if e.has_type() {
-                    e.get_type()
-                } else {
-                    String::from("Execution error")
-                };
-
-                println!("{} at REPL\n{}", error, err.message())
-            }
-            _ => println!("Error: {}", format_error(e)),
-        }
-    }
-}
-
-impl Default for Repl {
-    /// Creates a Repl object with all the standard definitions loaded.
-    fn default() -> Repl {
-        let repl = Repl::new();
-
-        core::load_lang_core(repl.environment.clone()); // Load language core
-
-        repl
     }
 }
 
@@ -109,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_builtin_fn() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
 
         assert_eq!(repl.rep("(symbol? 'abc)").unwrap(), "true");
         assert_eq!(repl.rep("(symbol? \"abc\")").unwrap(), "false");
@@ -169,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_symbol_and_keyword_functions() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(symbol? :abc)").unwrap(), "false");
         assert_eq!(repl.rep("(symbol? 'abc)").unwrap(), "true");
         assert_eq!(repl.rep("(symbol? \"abc\")").unwrap(), "false");
@@ -185,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_sequential_function() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(sequential? (list 1 2 3))").unwrap(), "true");
         assert_eq!(repl.rep("(sequential? [15])").unwrap(), "true");
         assert_eq!(repl.rep("(sequential? sequential?)").unwrap(), "false");
@@ -195,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_apply_function_core_functions_args_in_vector() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(apply + 4 [5])").unwrap(), "9");
         assert_eq!(repl.rep("(apply prn 1 2 [\"3\" 4])").unwrap(), "nil");
         assert_eq!(repl.rep("(apply list [])").unwrap(), "()");
@@ -203,20 +192,20 @@ mod tests {
 
     #[test]
     fn test_apply_function_user_functions_args_in_vector() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(apply (fn [a b] (+ a b)) [2 3])").unwrap(), "5");
         assert_eq!(repl.rep("(apply (fn [a b] (+ a b)) 4 [5])").unwrap(), "9");
     }
 
     #[test]
     fn test_throw() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert!(repl.rep("(throw \"err1\")").is_err());
     }
 
     #[test]
     fn test_dissoc_repl() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(def hm1 (hash-map))").unwrap();
         repl.rep("(def hm2 (assoc hm1 \"a\" 1))").unwrap();
         repl.rep("(def hm3 (assoc hm2 \"b\" 2))").unwrap();
@@ -245,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_equality_of_hash_maps() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(= {} {})").unwrap(), "true");
         assert_eq!(repl.rep("(= {} (hash-map))").unwrap(), "true");
         assert_eq!(
@@ -304,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_atoms() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(def e (atom {\"+\" +}))").unwrap();
         repl.rep("(swap! e assoc \"-\" -)").unwrap();
         assert_eq!(repl.rep("((get @e \"+\") 7 8)").unwrap(), "15");
@@ -330,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_metadata_on_mal_functions() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(meta (fn [a] a))").unwrap(), "nil");
         assert_eq!(
             repl.rep("(meta (with-meta (fn [a] a) {\"b\" 1}))").unwrap(),
@@ -397,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_def() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(def x {:a 1})").unwrap(), "#'user/x");
         assert_eq!(repl.rep("(def ^:dyn y)").unwrap(), "#'user/y");
         assert_eq!(repl.rep("(meta #'y)").unwrap(), "{:dyn true}");
@@ -405,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_meta() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(def ^:tx x)").unwrap(), "#'user/x");
         assert_eq!(repl.rep("(meta #'x)").unwrap(), "{:tx true}");
         assert_eq!(repl.rep("(def ^{:ty 23} y)").unwrap(), "#'user/y");
@@ -414,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_validation_functions() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(string? \"\")").unwrap(), "true");
         assert_eq!(repl.rep("(string? 'abc)").unwrap(), "false");
         assert_eq!(repl.rep("(string? \"abc\")").unwrap(), "true");
@@ -432,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_fn_macro() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(def add1 (fn [x] (+ x 1)))").unwrap();
 
         // Testing fn? function
@@ -458,7 +447,7 @@ mod tests {
 
     #[test]
     fn test_conj_seq_metadata() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(def l-wm (with-meta (fn [a] a) {\"b\" 2}))")
             .unwrap();
 
@@ -558,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_time_ms() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         let start_time: i64 = repl.rep("(time-ms)").unwrap().parse().unwrap();
         assert_ne!(start_time, 0);
         thread::sleep(Duration::from_millis(10));
@@ -568,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_macro_definition() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(def f (fn [x] (number? x)))").unwrap();
         repl.rep("(defmacro m f)").unwrap();
         let result_f: bool = repl.rep("(f (+ 1 1))").unwrap().parse().unwrap();
@@ -579,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_trivial_macros() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(defmacro one (fn [] 1))").unwrap();
         let result_one: i32 = repl.rep("(one)").unwrap().parse().unwrap();
         assert_eq!(result_one, 1);
@@ -590,7 +579,7 @@ mod tests {
 
     #[test]
     fn test_unless_macros() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(defmacro unless (fn [pred a b] `(if ~pred ~b ~a)))")
             .unwrap();
         let res = repl.rep("(unless false 7 8)").unwrap(); // if
@@ -604,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_macroexpand() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(defmacro one (fn [] 1))").unwrap();
         repl.rep("(defmacro unless (fn [pred a b] `(if ~pred ~b ~a)))")
             .unwrap();
@@ -616,7 +605,7 @@ mod tests {
 
     #[test]
     fn test_macro_evaluation() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(defmacro identity (fn [x] x))").unwrap();
         let result_identity_macro = repl
             .rep("(let [a 123] (macroexpand (identity a)))")
@@ -632,21 +621,21 @@ mod tests {
 
     #[test]
     fn test_empty_list_macro() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         let result_empty_list = repl.rep("()").unwrap();
         assert_eq!(result_empty_list, "()");
     }
 
     #[test]
     fn test_quasiquote_macro() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         let result_quasiquote = repl.rep("`(1)").unwrap();
         assert_eq!(result_quasiquote, "(1)");
     }
 
     #[test]
     fn test_set_fns() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         let res = repl.rep("(set {:a 2 :b 2})").unwrap();
         assert!(res == "#{[:a 2] [:b 2]}" || res == "#{[:b 2] [:a 2]}");
         let res = repl.rep("(set \"st\")").unwrap();
@@ -657,7 +646,7 @@ mod tests {
 
     #[test]
     fn test_do() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(do)").unwrap(), "nil");
         assert_eq!(repl.rep("(do (prn 101))").unwrap(), "nil");
         assert_eq!(repl.rep("(do (prn 102) 7)").unwrap(), "7");
@@ -668,13 +657,13 @@ mod tests {
     #[test]
     #[should_panic]
     fn error_symbol() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(fkdfd 'a 124)").unwrap(), "nil");
     }
 
     #[test]
     fn test_type_function() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
 
         // Test type of integer
         assert_eq!(repl.rep("(type 42)").unwrap(), "Integer");
@@ -716,13 +705,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "'bee' symbol not found in this context")]
     fn test_not_found() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("bee").unwrap(), "Integer");
     }
 
     #[test]
     fn test_ns_symbol() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("*ns*").unwrap(), "#Namespace<user>");
         assert_eq!(repl.rep("(ns boo)").unwrap(), "nil");
         assert_eq!(repl.rep("*ns*").unwrap(), "#Namespace<boo>");
@@ -730,7 +719,7 @@ mod tests {
 
     #[test]
     fn test_redef() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(def x 3)").unwrap(), "#'user/x");
         assert_eq!(repl.rep("x").unwrap(), "3");
         assert_eq!(repl.rep("(def x 4)").unwrap(), "#'user/x");
@@ -739,7 +728,7 @@ mod tests {
 
     // #[test]
     // fn test_refer_basic() {
-    //     let repl = Repl::default();
+    //     let repl = Repl::default().unwrap();
     //     assert_eq!(repl.rep("(def x 3)").unwrap(), "#'user/x");
     //     assert_eq!(repl.rep("(ns foo)").unwrap(), "nil");
     //     assert_eq!(repl.rep("(def y 4)").unwrap(), "#'foo/y");
@@ -751,7 +740,7 @@ mod tests {
 
     // #[test]
     // fn test_refer_override() {
-    //     let repl = Repl::default();
+    //     let repl = Repl::default().unwrap();
     //     assert_eq!(repl.rep("(def x 3)").unwrap(), "#'user/x");
     //     assert_eq!(repl.rep("(ns foo)").unwrap(), "nil");
     //     assert_eq!(repl.rep("(def x 4)").unwrap(), "#'foo/x");
@@ -764,7 +753,7 @@ mod tests {
     // #[test]
     // #[should_panic(expected = "`x` symbol not found in the environment")]
     // fn test_refer_private_symbols() {
-    //     let repl = Repl::default();
+    //     let repl = Repl::default().unwrap();
     //     assert_eq!(repl.rep("(ns foo)").unwrap(), "nil");
     //     assert_eq!(repl.rep("(def ^:private x 3)").unwrap(), "#'foo/x");
     //     assert_eq!(repl.rep("(meta #'foo/x)").unwrap(), "{:private true}");
@@ -775,7 +764,7 @@ mod tests {
 
     #[test]
     fn test_find_ns() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(ns foo)").unwrap(), "nil");
         assert_eq!(repl.rep("(ns user)").unwrap(), "nil");
         assert_eq!(repl.rep("(find-ns 'foo)").unwrap(), "#Namespace<foo>");
@@ -784,7 +773,7 @@ mod tests {
 
     #[test]
     fn test_starts_with_q() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(starts-with? \"beer\" \"be\")").unwrap(), "true");
         assert_eq!(repl.rep("(starts-with? \"beer\" \"b\")").unwrap(), "true");
         assert_eq!(repl.rep("(starts-with? \"beer\" \"e\")").unwrap(), "false");
@@ -794,7 +783,7 @@ mod tests {
 
     #[test]
     fn test_all_ns() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         let res = repl.rep("(all-ns)").unwrap();
         assert!(res.contains("#Namespace<user>"));
         assert!(res.contains("#Namespace<fmlisp.lang>"));
@@ -802,7 +791,7 @@ mod tests {
 
     #[test]
     fn test_instance_q() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(is? 'Integer 12)").unwrap(), "true");
         assert_eq!(repl.rep("(is? 'Integer 12.4)").unwrap(), "false");
         assert_eq!(repl.rep("(is? 'Float 12.4)").unwrap(), "true");
@@ -813,7 +802,7 @@ mod tests {
 
     #[test]
     fn test_is_private_public() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(def ^:private prv 1)").unwrap();
         repl.rep("(def pub 2)").unwrap();
         assert_eq!(repl.rep("(private? prv)").unwrap(), "true");
@@ -824,7 +813,7 @@ mod tests {
 
     #[test]
     fn test_invoke_var() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(
             repl.rep("(intern 'user 'sum (fn [a b c] (+ a b c)))")
                 .unwrap(),
@@ -835,13 +824,13 @@ mod tests {
 
     #[test]
     fn test_number_operations() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(+ 1 2 3)").unwrap(), "6");
     }
 
     #[test]
     fn test_get_keyword_hm() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         assert_eq!(repl.rep("(def x {:a 1})").unwrap(), "#'user/x");
         assert_eq!(repl.rep("(:a x)").unwrap(), "1");
         assert_eq!(repl.rep("(:a 1)").unwrap(), "nil");
@@ -852,13 +841,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "'d' symbol not found in this context")]
     fn test_get_keyword_hm_panic() {
-        let repl = Repl::default();
+        let repl = Repl::default().unwrap();
         repl.rep("(:a d)").unwrap();
     }
 
     // #[test]
     // fn test_require_alias() {
-    //     let repl = Repl::default();
+    //     let repl = Repl::default().unwrap();
     //     assert_eq!(repl.rep("(ns air)").unwrap(), "nil");
     //     assert_eq!(repl.rep("(def rock 1)").unwrap(), "#'air/rock");
     //     assert_eq!(repl.rep("(ns user)").unwrap(), "nil");

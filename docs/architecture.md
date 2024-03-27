@@ -1,6 +1,6 @@
 ## Main
 
-- When _fmlisp_ starts, there are two execution options:
+- When _FMLisp_ starts, there are two execution options:
   1. REPL
   2. load and execute a file
 
@@ -52,3 +52,12 @@ The feature I would like to add are:
 Solutions:
 
 - Save the source in the Reader. When it raises an error, find row/col in the sexpr.
+
+### Lisp Reader
+
+https://clojure.org/reference/reader
+
+The Lisp Reader convert the code rappresentation into data processable by the compiler.
+The Reader automatically convert some macros, without waiting for the code to be evaluated. For example quote, deref, comment, dispatch, metadata, syntaxquote, unquote, unquote-splicing.
+So the Reader should be able to process the AST and extend it directly before reach the _eval_ phase.
+Also the `gensym` reader macro `sym#` get's extended at _read_ time.

@@ -4,7 +4,9 @@ extern crate if_chain;
 extern crate itertools;
 extern crate regex;
 extern crate rustyline;
+extern crate termion;
 
+mod error_output;
 mod errors;
 mod traits;
 #[macro_use]
@@ -36,7 +38,10 @@ fn main() {
         Err(_) => println!(".env file not found"),
     }
 
-    let repl = Repl::default();
+    let repl = match Repl::default() {
+        Ok(r) => r,
+        Err(_) => return,
+    };
 
     let mut args = std::env::args();
     let arg1 = args.nth(1);

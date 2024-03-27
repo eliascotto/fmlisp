@@ -34,8 +34,10 @@ impl EnvironmentItem {
         if !self.has_namespace(sym) {
             self.namespaces.create_namespace(sym);
         }
-        self.current_ns.replace(sym.unqualified());
-        self.update_ns_symbol();
+        if self.current_ns.borrow().clone() != sym.unqualified() {
+            self.current_ns.replace(sym.unqualified());
+            self.update_ns_symbol();
+        }
 
         // Update namespace metadata
         if sym.has_meta() {

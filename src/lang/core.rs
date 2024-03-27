@@ -3,7 +3,6 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::read_to_string;
 use std::io::{stdin, stdout, Write};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::core;
@@ -18,14 +17,6 @@ use crate::values::{
     vector_from_vec, ExprArgs, LispErr, ToValue, Value, ValueRes,
 };
 use crate::var::Var;
-
-// Global counter for gensym ID
-static ID: AtomicI64 = AtomicI64::new(0);
-
-// Return next global ID
-fn next_id() -> i64 {
-    ID.fetch_add(1, Ordering::SeqCst)
-}
 
 /// Macro that receive an Integer and eval the expr.
 /// Returns an error if not Integer received.
@@ -44,7 +35,11 @@ macro_rules! fn_t_num_num {
     ($ret:ident, $fn:expr) => {{
         |a: ExprArgs, _env: Rc<Environment>| match (a[0].clone(), a[1].clone()) {
             (Value::Integer(a0), Value::Integer(a1)) => Ok($ret($fn(a0, a1))),
-            _ => error("expecting (num,num) args"),
+            _ => error_fmt!(
+                "Expecting numeric args only (Num, Num) received ({}, {})",
+                a[0].as_str(),
+                a[1].as_str()
+            ),
         }
     }};
 }
@@ -66,12 +61,40 @@ macro_rules! fn_is_type {
 pub fn load_file(path: &String, env: Rc<Environment>) -> ValueRes {
     match read_to_string(path) {
         Ok(data) => {
-            // We use `do` to read the entire file as a single sexpr
-            // let file_data = format!("(do {})", data);
-            let s_vec = reader::read_str_multiform(data)?;
-            let mut last_val = Value::Nil;
-            for s in s_vec {
-                last_val = core::eval(s, env.clone())?;
+            let mut r = reader::tokenize(&data, env.clone());
+            let mut res = vec![];
+            let mut last_val;
+
+            // Loop for multi-form evaluation.
+            // We eval each form sequentially to avoid using wrong namespace during syntax quote expansion.
+            // So when we read a file with `(ns..)` at the beninning, all the following code expansions,
+            // happening at reading time, will use the new namespace declared at the top of the file.
+            // This unfortunately forces the declaration to be sequential (require/circular import/declare)
+            // which is doesn't makes the language simple as declaring new methods in Rust.
+            //
+            // doing the following results in wrong namespace applied at `p1`:
+            // (eval (read-string "(do
+            //                       (ns foo.bar)
+            //                       (defn p1 [c] (+ 1 c))
+            //                       (println *ns*)
+            //                       (defmacro x [v] `(p1 v))
+            //                       (x 2))"))
+            //
+            // If we clone the same code in a file and load it instead, the code will be executed correctly.
+            // This is because file-reading process form sequentially while `read-string` just read 1 form and
+            // then eval it.
+            //
+            loop {
+                let v = match reader::read_form(&mut r) {
+                    Ok(s) => {
+                        last_val = core::eval(s, env.clone())?;
+                    }
+                    Err(e) => return Err(e),
+                };
+                res.push(v);
+                if r.peek().is_err() {
+                    break;
+                }
             }
             Ok(last_val)
         }
@@ -167,11 +190,11 @@ fn div(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     Ok(result)
 }
 
-fn read_string(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+fn read_string(a: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if a.len() != 1 {
         return error("Wrong number of arguments passed to read-string. Expecting 1");
     }
-    reader::read_str(a[0].to_string())
+    reader::read_str(a[0].to_string(), env)
 }
 
 fn slurp(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
@@ -230,16 +253,40 @@ fn vec(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
 }
 
 fn nth(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if a.len() < 2 {
+        return error("Wrong number of arguments passed to nth. Expecting at least 2");
+    }
+
+    // Support a custom not-found parameters that must be a string
+    let not_found_error = if let Some(v) = a.get(2) {
+        match v {
+            Value::Str(s) => LispErr::ErrString(s.to_string()),
+            _ => {
+                return error_fmt!(
+                    "Expected String as nth not-found parameter, received {}",
+                    v.pr_str()
+                )
+            }
+        }
+    } else {
+        LispErr::ErrString("nth: index out of range".to_string())
+    };
+
     match (a[0].clone(), a[1].clone()) {
         (Value::List(seq, _), Value::Integer(idx))
         | (Value::Vector(seq, _), Value::Integer(idx)) => {
             if seq.len() <= idx as usize {
-                return error("nth: index out of range");
+                return Err(not_found_error);
             }
             Ok(seq[idx as usize].clone())
         }
-        (Value::Str(_), Value::Integer(idx)) => a[0].char_at(idx as usize),
-        _ => error("invalid args to nth"),
+        (Value::Str(s), Value::Integer(idx)) => {
+            if s.len() <= idx as usize {
+                return Err(not_found_error);
+            }
+            Ok(Value::Char(s.chars().nth(idx as usize).unwrap() as char))
+        }
+        _ => error_fmt!("Invalid args passed to nth: use [coll index] or [coll index not-found]"),
     }
 }
 
@@ -911,7 +958,11 @@ fn set_macro(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
             let val = env.get_symbol_value(&var.sym)?.unwrap();
             match &*val {
                 Value::Lambda {
-                    ast, env, params, ..
+                    ast,
+                    env,
+                    params,
+                    name,
+                    ..
                 } => {
                     // Create a new Lambda, a new Var and set it into the namespace
                     let new_val = Value::Lambda {
@@ -920,6 +971,7 @@ fn set_macro(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
                         params: params.clone(),
                         is_macro: true,
                         meta: Some(new_meta.clone()),
+                        name: name.clone(),
                     };
                     let new_var =
                         Value::Var(Var::new(var.ns.clone(), var.sym.clone(), Rc::new(new_val)));
@@ -934,11 +986,11 @@ fn set_macro(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     }
 }
 
-fn next_id_func(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+fn next_id_fn(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if !args.is_empty() {
         return argument_error!("next-id expects no arguments");
     }
-    Ok(Value::Integer(next_id()))
+    Ok(Value::Integer(core::next_id()))
 }
 
 fn compare(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
@@ -947,6 +999,29 @@ fn compare(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     }
 
     Ok(Value::Integer(args[0].cmp(&args[1]) as i64))
+}
+
+fn zero_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return argument_error!("Wrong number of arguments passed to zero?. Expecting 1");
+    }
+
+    match args[0] {
+        Value::Integer(i) => Ok(Value::Bool(i == 0)),
+        Value::Float(f) => Ok(Value::Bool(f == 0.0)),
+        _ => error_fmt!("zero? requires a numeric value"),
+    }
+}
+
+fn int(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return argument_error!("Wrong number of arguments passed to int. Expecting 1");
+    }
+
+    match args[0] {
+        Value::Float(f) => Ok(Value::Integer(f as i64)),
+        _ => error_fmt!("zero? requires a numeric value"),
+    }
 }
 
 /// Returns a vector of string/values.
@@ -975,6 +1050,8 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("/", func(div)),
         ("inc", func(fn_t_num!(Integer, |i| { i + 1 }))),
         ("dec", func(fn_t_num!(Integer, |i| { i - 1 }))),
+        ("zero?", func(zero_q)),
+        ("int", func(int)),
         // COMPARISONS
         ("=", func(equiv)),
         ("<", func(fn_t_num_num!(Bool, |i, j| { i < j }))),
@@ -1004,10 +1081,6 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("str", func(|a, _| Ok(Value::Str(pr_seq(&a, "", "", ""))))),
         ("string?", func(fn_is_type!(Value::Str(_)))),
         ("char?", func(fn_is_type!(Value::Char(_)))),
-        ("list", func(|a, _| Ok(list_from_vec(a)))),
-        ("list?", func(fn_is_type!(Value::List(_, _)))),
-        ("empty?", func(empty_q)),
-        ("count", func(count)),
         ("read-string", func(read_string)),
         ("readline", func(readline)),
         ("slurp", func(slurp)),
@@ -1018,6 +1091,10 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("reset!", func(reset_bang)),
         ("swap!", func(swap_bang)),
         // COLLECTIONS
+        ("count", func(count)),
+        ("empty?", func(empty_q)),
+        ("list", func(|a, _| Ok(list_from_vec(a)))),
+        ("list?", func(fn_is_type!(Value::List(_, _)))),
         (
             "sequential?",
             func(fn_is_type!(Value::List(_, _), Value::Vector(_, _))),
@@ -1086,7 +1163,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("print-debug", macro_fn(print_debug)),
         ("load-file", func(load_file_fn)),
         ("set-macro", func(set_macro)),
-        ("next-id", func(next_id_func)),
+        ("next-id", func(next_id_fn)),
         ("compare", func(compare)),
         // ERROR HANDLING
         ("throw", func(throw)),

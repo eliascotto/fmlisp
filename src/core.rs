@@ -4,8 +4,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::env::Environment;
+use crate::error_output;
 use crate::lang;
 use crate::reader;
 use crate::symbol::Symbol;
@@ -16,38 +18,25 @@ use crate::values::LispErr::{self};
 use crate::values::{format_error, ExprArgs, ToValue, Value, ValueRes};
 use crate::var::Var;
 
+/// Global counter for gensym ID, Atomic
+static ID: AtomicI64 = AtomicI64::new(0);
+
+/// Return next global ID
+pub fn next_id() -> i64 {
+    ID.fetch_add(1, Ordering::SeqCst)
+}
+
 /// Read and eval a file
-fn load_file(path: &str, env: Rc<Environment>) {
+fn load_file(path: &str, env: Rc<Environment>) -> i8 {
     match lang::core::load_file(&String::from(path), env.clone()) {
-        Ok(_) => {}
-        Err(e) => match e.clone() {
-            LispErr::Error(err) => {
-                let prefix = if let Some(details) = err.details() {
-                    format!("Error {} at {}", details, path)
-                } else if let Some(at) = err.info.get(&String::from("at")) {
-                    format!("Error at {} {}", path, at)
-                } else {
-                    format!("Error at {}", path)
-                };
-                if err.has_trace() {
-                    eprintln!(
-                        "{}\n{}\nBacktrace:\n{}",
-                        prefix,
-                        format_error(e),
-                        err.fmt_trace(false)
-                    )
-                } else {
-                    eprintln!("{}\n{}", prefix, format_error(e))
-                }
-            }
-            _ => eprintln!("Error at {}\n{}", path, format_error(e)),
-        },
+        Ok(_) => 0,
+        Err(e) => error_output::eprint(e, path),
     }
 }
 
 /// Load the language core functions and symbols into the namespace,
 /// also reads the fmlisp libraries files.
-pub fn load_lang_core(env: Rc<Environment>) {
+pub fn load_lang_core(env: Rc<Environment>) -> Result<(), LispErr> {
     env.change_or_create_namespace(&sym!("fmlisp.lang"));
 
     // Loading internal definitions
@@ -71,17 +60,23 @@ pub fn load_lang_core(env: Rc<Environment>) {
 
     // Load language file
     // load_file("src/fmlisp/test.fml", env.clone());
-    load_file("src/fmlisp/core.fml", env.clone());
+    match load_file("src/fmlisp/core.fml", env.clone()) {
+        0 => {}
+        -1 => return error!("Error loading file"),
+        _ => {}
+    }
 
     // Change to default user namespace
     env.change_or_create_namespace(&Symbol::new("user"));
 
     let _ = env.add_referred_namespace(&sym!("fmlisp.core"));
+
+    Ok(())
 }
 
 /// Transform string into a FMLisp Value.
-pub fn read(s: &str) -> ValueRes {
-    reader::read_str(s.to_string())
+pub fn read(s: &str, env: Rc<Environment>) -> ValueRes {
+    reader::read_str(s.to_string(), env)
 }
 
 /// Transform the Value to string.
@@ -98,53 +93,6 @@ pub fn process_error(e: &LispErr, ast: &Value) -> LispErr {
             LispErr::Error(err)
         }
         _ => e.clone(),
-    }
-}
-
-// ex qq_iter
-fn traverse_list_iter(elts: &ExprArgs, env: Rc<Environment>) -> Value {
-    let mut acc = list![];
-    for elt in elts.iter().rev() {
-        if let Value::List(v, _) = elt {
-            if v.len() == 2 {
-                if let Value::Symbol(ref s) = v[0] {
-                    if s.name() == "unquote-splicing" {
-                        acc = list![Value::Symbol(sym!("concat")), v[1].clone(), acc];
-                        continue;
-                    }
-                }
-            }
-        }
-        acc = list![
-            Value::Symbol(sym!("cons")),
-            quasiquote(&elt, env.clone()),
-            acc
-        ];
-    }
-    acc
-}
-
-fn quasiquote(ast: &Value, env: Rc<Environment>) -> Value {
-    match ast.clone() {
-        Value::List(v, _) => {
-            if v.len() == 2 {
-                if let Value::Symbol(ref s) = v[0] {
-                    if s.name() == "unquote" {
-                        return v[1].clone();
-                    }
-                }
-            }
-            traverse_list_iter(&v, env)
-        }
-        Value::Vector(v, _) => list![Value::Symbol(sym!("vec")), traverse_list_iter(&v, env)],
-        Value::Symbol(mut sym) => {
-            sym.ns = Some(env.get_current_namespace_name());
-            list![Value::Symbol(sym!("quote")), Value::Symbol(sym)]
-        }
-        Value::HashMap(_, _) | Value::Set(_, _) => {
-            list![Value::Symbol(sym!("quote")), ast.clone()]
-        }
-        _ => ast.clone(),
     }
 }
 
@@ -170,7 +118,7 @@ fn quasiquote(ast: &Value, env: Rc<Environment>) -> Value {
 //
 // Solution 2:
 //  The macro expansion, should happen only into the namespace where the macro is
-// defined.
+// defined. The syntax-quote already resolved all the rest of the symbols.
 
 /// Returns a macro function, the arguments and the macro env, and the namespace of the var
 /// that contains the symbol of the macro, if found or None.
@@ -311,14 +259,18 @@ fn get_fn_body_defs(args: Vec<Value>) -> Rc<Value> {
     }
 }
 
-fn compute_fn_arity(params: Rc<Vec<Value>>) -> usize {
+// Implementing the function arity returning MIN-MAX since using
+// variadic functions, we can have a min number of arguments to be called
+// and then max as usize::MAX
+fn compute_fn_arity(params: Rc<Vec<Value>>) -> (usize, usize) {
     let mut arity: usize = 0;
     for p in params.iter() {
         match p {
             Value::Symbol(sym) => {
+                // Variadic function
                 if sym.name() == "&" {
                     // If & let's just use the max value available
-                    return usize::MAX;
+                    return (arity, usize::MAX);
                 }
                 arity += 1;
             }
@@ -328,10 +280,10 @@ fn compute_fn_arity(params: Rc<Vec<Value>>) -> usize {
             ),
         }
     }
-    arity
+    (arity, arity)
 }
 
-// Returns a tuple ast-params based on the function's arity needed
+/// Returns a tuple ast-params based on the function's arity needed
 pub fn find_ast_and_params_by_arity(
     ast: &[Rc<Value>],
     params: &[Rc<Value>],
@@ -341,8 +293,17 @@ pub fn find_ast_and_params_by_arity(
     // Then use the corresponding params and ast for executing the Lambda.
     for (index, param) in params.iter().enumerate() {
         if let Value::Vector(v, _) = &**param {
-            if compute_fn_arity(v.clone()) >= arity {
-                return Some((ast[index].clone(), params[index].clone()));
+            let (min, max) = compute_fn_arity(v.clone());
+            if min == max {
+                // If standard function body, check arity equality
+                if max == arity {
+                    return Some((ast[index].clone(), params[index].clone()));
+                }
+            } else {
+                // If variadic function, check min and max
+                if arity > min && arity < max {
+                    return Some((ast[index].clone(), params[index].clone()));
+                }
             }
         }
     }
@@ -417,7 +378,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             Err(e) => {
                                 return Err(process_error(&e, &ast));
                             }
-                        }
+                        };
                     }
                     (_, Err(e)) => return Err(e),
                     _ => (), // if not a macro, don't do nothing
@@ -500,6 +461,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                             params: params.clone(),
                                             is_macro, // Set is_macro is macro in metadata
                                             meta: Some(sym_meta.clone()),
+                                            name: Some(sym.name.clone()),
                                         };
                                         Rc::new(new_val)
                                     }
@@ -726,9 +688,9 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
 
                         // Optional name for lambda
                         let lambda_name = match args[0].clone() {
-                            Value::Symbol(_) => {
+                            Value::Symbol(s) => {
                                 args_idx += 1;
-                                Some(args[0].clone())
+                                Some(s.name)
                             }
                             _ => None,
                         };
@@ -803,6 +765,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             params: params_v,
                             is_macro: false,
                             meta: None,
+                            name: lambda_name,
                         }))
                     }
                     Value::Symbol(ref headsym) if headsym.name() == "eval" => {
@@ -830,7 +793,8 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 "Wrong number of arguments given to quasiquoteexpand. Expecting 1"
                             );
                         }
-                        Ok(Rc::new(quasiquote(&args[0], mut_env.borrow().clone())))
+                        let mut sqr = reader::SyntaxQuoteReader::new(mut_env.borrow().clone());
+                        Ok(Rc::new(reader::syntax_quote(&args[0], &mut sqr)))
                     }
                     Value::Symbol(ref headsym) if headsym.name() == "quasiquote" => {
                         if args.len() != 1 {
@@ -838,7 +802,8 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 "Wrong number of arguments given to quasiquote. Expecting 1"
                             );
                         }
-                        ast = quasiquote(&args[0], mut_env.borrow().clone());
+                        let mut sqr = reader::SyntaxQuoteReader::new(mut_env.borrow().clone());
+                        ast = reader::syntax_quote(&args[0], &mut sqr);
                         continue 'tco;
                     }
                     Value::Symbol(ref headsym) if headsym.name() == "defmacro" => {
@@ -848,6 +813,10 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             );
                         }
                         let macro_name = args[0].clone();
+                        let macro_name_str = match macro_name.clone() {
+                            Value::Symbol(s) => Some(s.name),
+                            _ => None,
+                        };
                         let macro_args = args[1].clone();
                         let r = match eval(macro_args, mut_env.borrow().clone()) {
                             Ok(v) => v,
@@ -863,6 +832,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                     params: params.clone(),
                                     is_macro: true,
                                     meta: None,
+                                    name: macro_name_str,
                                 }
                                 .to_rc_value();
                                 if let Value::Symbol(sym) = macro_name {
@@ -961,6 +931,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                             Ok(x) => x,
                             Err(e) => return Err(process_error(&e, &ast)),
                         };
+                        let mut f_str = f.to_string();
                         match &*f.borrow() {
                             // Internal FMLisp function
                             Value::Func(_, _) => {
@@ -977,7 +948,6 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 match f.apply(evaled_args, mut_env.borrow().clone()) {
                                     Ok(ret) => Ok(ret.to_rc_value()),
                                     Err(e) => {
-                                        println!("error: {}\n{:?}", ast, e);
                                         return Err(process_error(&e, &ast));
                                     }
                                 }
@@ -995,6 +965,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                 ast: mast,
                                 env: menv,
                                 params,
+                                name: lambda_name,
                                 ..
                             } => {
                                 let lambda_ast = &**mast;
@@ -1011,20 +982,25 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                                     find_ast_and_params_by_arity(lambda_ast, params, args_count)
                                 {
                                     // Now bind the arguments to the lambda params in a new env
-                                    let new_env = match menv.bind(p, bind_args) {
+                                    let new_env = match menv.bind(p, bind_args.clone()) {
                                         Ok(v) => v,
                                         Err(e) => return Err(process_error(&e, &ast)),
                                     };
+
                                     ast = (*a).clone();
                                     mut_env.replace(new_env);
                                     continue 'tco;
                                 } // else
+
+                                if let Some(s) = lambda_name {
+                                    f_str = s.clone();
+                                }
                                 return error!(format!(
                                     "Wrong number of arguments ({}) passed to function {}",
-                                    args_count, f
+                                    args_count, f_str
                                 ));
                             }
-                            _ => error!(format!("Attempt to call non-function {}", f)),
+                            _ => error!(format!("Attempt to call non-function {}", f_str)),
                         }
                     }
                 }

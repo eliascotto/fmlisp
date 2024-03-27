@@ -1,8 +1,11 @@
 use regex::{Captures, Regex};
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
+use crate::core;
+use crate::env::Environment;
 use crate::keyword::Keyword;
 use crate::symbol::Symbol;
 use crate::utils::{self, str_first};
@@ -14,7 +17,7 @@ use crate::values::{
 
 /// A Token is a string with row,col position inside
 /// the original source.
-struct Token {
+pub struct Token {
     tok: String,
     row: usize,
     col: usize,
@@ -31,23 +34,24 @@ pub struct Reader {
     // Tokens is a vector of forms which contains tokens
     tokens: Vec<Token>,
     pos: usize, // position counter inside the sexpr
+    env: Rc<Environment>,
 }
 
 impl Reader {
     fn next(&mut self) -> Result<&Token, LispErr> {
         let token = match self.tokens.get(self.pos) {
             Some(t) => t,
-            None => return Err(ErrString("underflow".to_string())),
+            None => return Err(ErrString("EOF while reading".to_string())),
         };
 
         self.pos += 1;
         Ok(token)
     }
 
-    fn peek(&self) -> Result<&Token, LispErr> {
+    pub fn peek(&self) -> Result<&Token, LispErr> {
         match self.tokens.get(self.pos) {
             Some(t) => return Ok(t),
-            None => return Err(ErrString("underflow".to_string())),
+            None => return Err(ErrString("EOF while reading".to_string())),
         };
     }
 
@@ -84,7 +88,7 @@ pub fn unescape_regex() -> &'static Regex {
 pub fn tokens_regex() -> &'static Regex {
     static TOKEN_RE: OnceLock<Regex> = OnceLock::new();
     TOKEN_RE.get_or_init(|| {
-        Regex::new(r###"[\s,]*(~@|[\[\]{}()'`~^@]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]+)"###)
+        Regex::new(r###"[\s,]*(~@|[\[\]{}()'`~^@#_]|"(?:\\.|[^\\"])*"?|;.*|[^\s\[\]{}('"`,;)]+)"###)
             .unwrap()
     })
 }
@@ -94,7 +98,7 @@ pub fn tokens_regex() -> &'static Regex {
 /// `multi_form` enable multi form parsing;
 /// helpful if `s` it's meant to be a multi form string
 /// otherwhise only the first form will be tokenized.
-pub fn tokenize(s: &str) -> Reader {
+pub fn tokenize(s: &str, env: Rc<Environment>) -> Reader {
     // Trim string to avoid processing ending spaces and \n
     let trim_s = s.trim();
     let mut tokens = vec![];
@@ -148,7 +152,11 @@ pub fn tokenize(s: &str) -> Reader {
         tokens.push(tok);
     }
 
-    Reader { tokens, pos: 0 }
+    Reader {
+        tokens,
+        env,
+        pos: 0,
+    }
 }
 
 fn unescape_str(s: &str) -> String {
@@ -235,31 +243,42 @@ fn read_seq(r: &mut Reader, end: &str, coll_type: CollType) -> ValueRes {
     }
 }
 
-fn read_form(r: &mut Reader) -> ValueRes {
+pub fn read_form(r: &mut Reader) -> ValueRes {
     let token = r.peek()?;
 
     match token.tok.as_str() {
+        // Macro characters: https://clojure.org/reference/reader#macrochars
         "'" => {
             let _ = r.next();
             Ok(list![Value::Symbol(sym!("quote")), read_form(r)?])
         }
         "#" => {
+            // Dispatch: https://clojure.org/reference/reader#_dispatch
             let _ = r.next();
             let next_token = r.peek()?;
             match next_token.tok.as_str() {
-                // Call var with #'sym
+                // Var-quote (#'sym)
                 "'" => {
                     let _ = r.next();
                     Ok(list![Value::Symbol(sym!("var")), read_form(r)?])
                 }
-                // Create a set with #{..}
+                // Ignore next form (#_form)
+                "_" => {
+                    let _ = r.next();
+                    let _ = read_form(r)?; // discard next form
+                    read_form(r)
+                }
+                // Create a set (#{..})
                 "{" => read_seq(r, "}", CollType::Set),
                 _ => return error!(format!("Wrong token found: {}", next_token.tok)),
             }
         }
         "`" => {
+            // Syntax-quote: https://clojure.org/reference/reader#syntax-quote
             let _ = r.next();
-            Ok(list![Value::Symbol(sym!("quasiquote")), read_form(r)?])
+            // Ok(list![Value::Symbol(sym!("quasiquote")), read_form(r)?])
+            let mut sqr = SyntaxQuoteReader::new(r.env.clone());
+            Ok(syntax_quote(&read_form(r)?, &mut sqr))
         }
         "~" => {
             let _ = r.next();
@@ -295,26 +314,32 @@ fn read_form(r: &mut Reader) -> ValueRes {
             let _ = r.next();
             Ok(list![Value::Symbol(sym!("deref")), read_form(r)?])
         }
-        ")" => error("unexpected ')'"),
+        ")" => error("Unmatched delimiter: ')'"),
         "(" => read_seq(r, ")", CollType::List),
-        "]" => error("unexpected ']'"),
+        "]" => error("Unmatched delimiter: ']'"),
         "[" => read_seq(r, "]", CollType::Vector),
-        "}" => error("unexpected '}'"),
+        "}" => error("Unmatched delimiter: '}'"),
         "{" => read_seq(r, "}", CollType::HashMap),
         _ => read_atom(r),
     }
 }
 
-pub fn read_str(s: String) -> ValueRes {
-    let mut reader = tokenize(&s);
+// Current Environment is imported to expand the symbols
+// when the Reader find a syntax-quote
+
+pub fn read_str(s: String, env: Rc<Environment>) -> ValueRes {
+    let mut reader = tokenize(&s, env);
+
+    // println!("{:#?}", reader);
+
     read_form(&mut reader)
 }
 
-pub fn read_str_multiform(s: String) -> Result<Vec<Value>, LispErr> {
-    let mut reader = tokenize(&s);
+pub fn read_str_multiform(s: String, env: Rc<Environment>) -> Result<Vec<Value>, LispErr> {
+    let mut reader = tokenize(&s, env);
     let mut res = vec![];
 
-    // println!("{:#?}", reader);
+    println!("{:#?}", reader.tokens);
 
     loop {
         let v = match read_form(&mut reader) {
@@ -327,4 +352,122 @@ pub fn read_str_multiform(s: String) -> Result<Vec<Value>, LispErr> {
         }
     }
     Ok(res)
+}
+
+// List of internal reserved keyword used by the compiler
+static RESERVED_KW: [&'static str; 16] = [
+    "def",
+    "let*",
+    "macroexpand",
+    "do",
+    "loop*",
+    "recur",
+    "if",
+    "fn*",
+    "eval",
+    "quote",
+    "quasiquoteexpand",
+    "quasiquote",
+    "defmacro",
+    "try",
+    "var",
+    "throw",
+];
+
+fn resolve_symbol(sym: &mut Symbol, env: Rc<Environment>) -> Symbol {
+    if sym.has_ns() || RESERVED_KW.contains(&sym.name.as_str()) {
+        return sym.clone();
+    }
+
+    match env.get(sym) {
+        Ok(val) => match &*val {
+            Value::Var(var) => {
+                sym.ns = Some(var.ns.name().to_string());
+                return sym.clone();
+            }
+            _ => {}
+        },
+        Err(_) => {}
+    }
+
+    sym.ns = Some(env.get_current_namespace_name());
+    sym.clone()
+}
+
+/// Struct used to store data for Reader
+pub struct SyntaxQuoteReader {
+    gensyms: HashMap<Symbol, Symbol>,
+    env: Rc<Environment>,
+}
+
+impl SyntaxQuoteReader {
+    pub fn new(env: Rc<Environment>) -> SyntaxQuoteReader {
+        SyntaxQuoteReader {
+            gensyms: HashMap::new(),
+            env,
+        }
+    }
+}
+
+fn expand_list(elts: &Vec<Value>, sqr: &mut SyntaxQuoteReader) -> Value {
+    let mut acc = list![];
+    for elt in elts.iter().rev() {
+        if let Value::List(v, _) = elt {
+            if v.len() == 2 {
+                if let Value::Symbol(ref s) = v[0] {
+                    if s.name() == "unquote-splicing" {
+                        acc = list![Value::Symbol(sym!("concat")), v[1].clone(), acc];
+                        continue;
+                    }
+                }
+            }
+        }
+        acc = list![Value::Symbol(sym!("cons")), syntax_quote(&elt, sqr), acc];
+    }
+    acc
+}
+
+pub fn syntax_quote(ast: &Value, sqr: &mut SyntaxQuoteReader) -> Value {
+    match ast.clone() {
+        Value::Symbol(mut sym) => {
+            let ret: Value;
+            if sym.ns == None && sym.name.ends_with("#") {
+                // Gensym literal
+                if let Some(gs) = sqr.gensyms.get(&sym) {
+                    ret = Value::Symbol(gs.clone());
+                } else {
+                    // remove trailing #
+                    let gen_sym = format!(
+                        "{}__{}__auto__",
+                        utils::remove_last_char(sym.name.clone()),
+                        core::next_id()
+                    );
+                    let new_sym = Symbol::new(gen_sym.as_str());
+                    sqr.gensyms.insert(sym, new_sym.clone());
+                    ret = Value::Symbol(new_sym);
+                }
+            } else {
+                // Resolve every symbol
+                let s = resolve_symbol(&mut sym, sqr.env.clone());
+                ret = Value::Symbol(s);
+            }
+
+            list![Value::Symbol(sym!("quote")), ret]
+        }
+        Value::List(v, _) => {
+            if v.len() == 2 {
+                if let Value::Symbol(ref s) = v[0] {
+                    if s.name() == "unquote" {
+                        return v[1].clone();
+                    }
+                }
+            }
+            expand_list(&v, sqr)
+        }
+        Value::Vector(v, _) => list![Value::Symbol(sym!("vec")), expand_list(&v, sqr)],
+        Value::HashMap(_, _) | Value::Set(_, _) => {
+            list![Value::Symbol(sym!("quote")), ast.clone()]
+        }
+        _ => ast.clone(),
+    }
 }

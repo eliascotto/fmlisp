@@ -57,6 +57,7 @@ pub enum Value {
         params: Vec<Rc<Value>>,
         is_macro: bool,
         meta: Option<HashMap<Value, Value>>,
+        name: Option<String>,
     },
 
     // LISP
@@ -222,6 +223,7 @@ impl Hash for Value {
                 params,
                 is_macro,
                 meta: _,
+                name: _,
             } => {
                 // Not hashing function pointers and environment
                 (ast, params, is_macro).hash(state);
@@ -637,6 +639,10 @@ impl Value {
         match self {
             Value::List(l, _) | Value::Vector(l, _) => Ok(Value::Integer(l.len() as i64)),
             Value::Str(s) => Ok(Value::Integer(s.len() as i64)),
+            Value::HashMap(h, _) => Ok(Value::Integer(h.len() as i64)),
+            Value::TreeMap(h, _) => Ok(Value::Integer(h.len() as i64)),
+            Value::Set(h, _) => Ok(Value::Integer(h.len() as i64)),
+            Value::TreeSet(h, _) => Ok(Value::Integer(h.len() as i64)),
             Value::Nil => Ok(Value::Integer(0)),
             _ => error(&format!(
                 "count not supported on this type: {}",
@@ -650,7 +656,9 @@ impl Value {
             Value::List(l, _) | Value::Vector(l, _) => Ok(Value::Bool(l.len() == 0)),
             Value::Str(s) => Ok(Value::Bool(s.len() == 0)),
             Value::HashMap(hm, _) => Ok(Value::Bool(hm.is_empty())),
+            Value::TreeMap(hm, _) => Ok(Value::Bool(hm.is_empty())),
             Value::Set(s, _) => Ok(Value::Bool(s.is_empty())),
+            Value::TreeSet(s, _) => Ok(Value::Bool(s.is_empty())),
             Value::Nil => Ok(Value::Bool(true)),
             _ => error(&format!(
                 "empty? not supported on this type: {}",
@@ -818,22 +826,6 @@ impl Value {
         }
     }
 
-    pub fn char_at(&self, idx: usize) -> ValueRes {
-        match self {
-            Value::Str(ref s) => {
-                if idx < s.len() {
-                    Ok(Value::Char(s.chars().nth(idx).unwrap() as char))
-                } else {
-                    error("Index out of bound")
-                }
-            }
-            _ => error(&format!(
-                "char_at not supported on this type: {}",
-                self.as_str()
-            )),
-        }
-    }
-
     pub fn to_chars_list(&self) -> ValueRes {
         match self {
             Value::Str(ref s) => {
@@ -893,7 +885,7 @@ impl ToValue for std::string::String {
 
 impl ToValue for &str {
     fn to_value(&self) -> Value {
-        Value::Str(std::string::String::from(self.clone()))
+        Value::Str(self.to_string())
     }
 }
 
@@ -1583,31 +1575,6 @@ mod tests {
         let f = func(test_this);
         let expected_f = Value::Func(test_this, None);
         assert_eq!(f, expected_f);
-    }
-
-    // char_at
-
-    #[test]
-    fn test_char_at_working() {
-        let string = string("hello");
-
-        assert_eq!(string.char_at(0).unwrap(), Value::Char('h'));
-        assert_eq!(string.char_at(1).unwrap(), Value::Char('e'));
-        assert_eq!(string.char_at(4).unwrap(), Value::Char('o'));
-    }
-
-    #[test]
-    #[should_panic(expected = "char_at not supported")]
-    fn test_char_at_panic() {
-        let non_string = Value::Integer(42);
-        let _ = non_string.char_at(0).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "Index out of bound")]
-    fn test_char_at_out_of_bounds() {
-        let string = string("hello");
-        let _ = string.char_at(10).unwrap();
     }
 
     // to_chars_list

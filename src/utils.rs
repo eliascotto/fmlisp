@@ -1,5 +1,6 @@
 use std::backtrace::Backtrace;
 use std::env;
+use std::fmt::Display;
 
 // Just a little sugar around having to write 'num % 2 == 0'
 pub trait IsEven {
@@ -86,4 +87,22 @@ pub fn count_leading_whitespace(s: &str) -> usize {
 
 pub fn count_newlines(s: &str) -> usize {
     s.chars().filter(|c| *c == '\n').count()
+}
+
+pub fn remove_last_char(s: String) -> String {
+    if s.is_empty() {
+        return s;
+    }
+    let len = s.len();
+    s[..len - 1].to_string()
+}
+
+pub fn print_vec<T: Display>(v: Vec<T>) -> String {
+    format!(
+        "[{}]",
+        v.iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }

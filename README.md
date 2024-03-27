@@ -11,6 +11,10 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 
 ## TODO
 
+- fix quasiquote to be evaluated
+- add gensym support for syntax-quote `
+- add support for #\_ wich is comment entire form
+- Add support for regex and regex parrtern `#"pattern"`
 - `refer` function
 - `require` with file loading
 - `doc`
@@ -42,6 +46,7 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
   - error show on line like rust
 - Static typing?? - if it's worth it
 - Datalog and an easy way to express logic and formality
+- Multiarity and variadic function
 
 ## Specials Forms
 
