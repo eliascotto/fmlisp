@@ -314,11 +314,11 @@ pub fn read_form(r: &mut Reader) -> ValueRes {
             let _ = r.next();
             Ok(list![Value::Symbol(sym!("deref")), read_form(r)?])
         }
-        ")" => error("Unmatched delimiter: ')'"),
+        ")" => error_with_pos("Unmatched delimiter: ')'", r),
         "(" => read_seq(r, ")", CollType::List),
-        "]" => error("Unmatched delimiter: ']'"),
+        "]" => error_with_pos("Unmatched delimiter: ']'", r),
         "[" => read_seq(r, "]", CollType::Vector),
-        "}" => error("Unmatched delimiter: '}'"),
+        "}" => error_with_pos("Unmatched delimiter: '}'", r),
         "{" => read_seq(r, "}", CollType::HashMap),
         _ => read_atom(r),
     }

@@ -15,7 +15,7 @@ pub struct Symbol {
 // Create a Symbol from a String
 macro_rules! sym {
     ($x:expr) => {
-        Symbol::new($x)
+        crate::symbol::Symbol::new($x)
     };
 }
 

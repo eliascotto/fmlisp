@@ -650,6 +650,84 @@
   ([coll index] (fmlisp.lang/nth coll index))
   ([coll index not-found] (fmlisp.lang/nth coll index not-found)))
 
+(def
+  ^{:arglists: '([x])
+    :doc "Returns a number one greater than num. Does not auto-promote
+    longs, will throw on overflow."
+    :added "1.0"}
+  inc fmlisp.lang/inc)
+
+(def
+  ^{:arglists: '([x])
+    :doc "Returns a number one less than num. Does not auto-promote
+    longs, will throw on overflow."
+    :added "1.0"}
+  dec fmlisp.lang/dec)
+
+(def
+  ^{:argslists: '([coll])
+    :doc "Returns a seq of the items in coll in reverse order. Not lazy."
+    :added "1.0"}
+  reverse fmlisp.lang/reverse)
+
+(defn ^:private
+  reduce1
+  ([f coll]
+   (let [s (seq coll)]
+     (if s
+       (reduce1 f (first s) (next s))
+       (f))))
+  ([f val coll]
+   (let [s (seq coll)]
+     (if s
+       (reduce1 f (f val (first s)) (next s))
+       val))))
+
+(defn cast
+  "Throws a ClassCastException if x is not a c, else returns x."
+  {:added "1.0"
+   :static true}
+  [c x] (fmlisp.lang/cast c x))
+
+(defn +
+  "Returns the sum of nums. (+) returns 0. Does not auto-promote
+  longs, will throw on overflow. See also: +'"
+  {:added "1.2"}
+  ([] 0)
+  ([x] (cast Number x))
+  ([x y] (fmlisp.lang/add x y))
+  ([x y & more]
+     (reduce1 + (+ x y) more)))
+
+(defn *
+  "Returns the product of nums. (*) returns 1. Does not auto-promote
+  longs, will throw on overflow. See also: *'"
+  {:added "1.2"}
+  ([] 1)
+  ([x] (cast Number x))
+  ([x y] (fmlisp.lang/multiply x y))
+  ([x y & more]
+     (reduce1 * (* x y) more)))
+
+(defn /
+  "If no denominators are supplied, returns 1/numerator,
+  else returns numerator divided by all of the denominators."
+  {:added "1.0"}
+  ([x] (/ 1 x))
+  ([x y] (fmlisp.lang/divide x y))
+  ([x y & more]
+   (reduce1 / (/ x y) more)))
+
+(defn -
+  "If no ys are supplied, returns the negation of x, else subtracts
+  the ys from x and returns the result. Does not auto-promote
+  longs, will throw on overflow. See also: -'"
+  {:added "1.2"}
+  ([x] (fmlisp.lang/minus x))
+  ([x y] (. clojure.lang.Numbers (minus x y)))
+  ([x y & more]
+     (reduce1 - (- x y) more)))
+
 (defn <
   "Returns non-nil if nums are in monotonically increasing order,
   otherwise false."
@@ -660,8 +738,67 @@
   ([x y] (fmlisp.lang/< x y))
   ([x y & more]
    (if (< x y)
-     (do (println "inside: " more)
-       (if (next more)
+     (if (next more)
        (< y (first more) (rest more))
-       (< y (first more))))
+       (< y (first more)))
+     false)))
+
+(defn <=
+  "Returns non-nil if nums are in monotonically non-decreasing order,
+  otherwise false."
+  {:inline (fn [x y] `(fmlisp.lang/<= ~x ~y))
+   :inline-arities #{2}
+   :added "1.0"}
+  ([x] true)
+  ([x y] (fmlisp.lang/<= x y))
+  ([x y & more]
+   (if (<= x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (<= y (first more)))
+     false)))
+
+(defn >
+  "Returns non-nil if nums are in monotonically decreasing order,
+  otherwise false."
+  {:inline (fn [x y] `(fmlisp.lang/> ~x ~y))
+   :inline-arities #{2}
+   :added "1.0"}
+  ([x] true)
+  ([x y] (fmlisp.lang/> x y))
+  ([x y & more]
+   (if (> x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (> y (first more)))
+     false)))
+
+(defn >=
+  "Returns non-nil if nums are in monotonically non-increasing order,
+  otherwise false."
+  {:inline (fn [x y] `(fmlisp.lang/>= (gte ~x ~y)))
+   :inline-arities #{2}
+   :added "1.0"}
+  ([x] true)
+  ([x y] (fmlisp.lang/>= (gte x y)))
+  ([x y & more]
+   (if (>= x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (>= y (first more)))
+     false)))
+
+(defn ==
+  "Returns non-nil if nums all have the equivalent
+  value (type-independent), otherwise false"
+  {:inline (fn [x y] `(fmlisp.lang.numbers/equiv ~x ~y))
+   :inline-arities #{2}
+   :added "1.0"}
+  ([x] true)
+  ([x y] (fmlisp.lang.numbers/equiv x y))
+  ([x y & more]
+   (if (== x y)
+     (if (next more)
+       (== y (first more) (next more))
+       (== y (first more)))
      false)))

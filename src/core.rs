@@ -28,7 +28,7 @@ pub fn next_id() -> i64 {
 
 /// Read and eval a file
 fn load_file(path: &str, env: Rc<Environment>) -> i8 {
-    match lang::core::load_file(&String::from(path), env.clone()) {
+    match lang::commons::load_file(&String::from(path), env.clone()) {
         Ok(_) => 0,
         Err(e) => error_output::eprint(e, path),
     }
@@ -57,6 +57,10 @@ pub fn load_lang_core(env: Rc<Environment>) -> Result<(), LispErr> {
             env.insert_var(Symbol::new(k), v.to_rc_value());
         }
     }
+
+    lang::numbers::load(env.clone());
+
+    env.change_or_create_namespace(&sym!("fmlisp.lang"));
 
     // Load language file
     // load_file("src/fmlisp/test.fml", env.clone());

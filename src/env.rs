@@ -1,3 +1,4 @@
+use if_chain::if_chain;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -416,12 +417,25 @@ impl Environment {
                     match b {
                         Value::Symbol(s) if s.name() == "&" => {
                             if let Value::Symbol(sym) = binds[i + 1].clone() {
-                                let val = Rc::new(list_from_vec(exprs[i..].to_vec()));
+                                let mut params = exprs[i..].to_vec();
+
+                                if_chain! {
+                                    if params.len() == 1;
+                                    if let Value::List(l, _) = params[0].clone();
+                                    then {
+                                        params = l.to_vec();
+                                    }
+                                }
+
+                                let val = Rc::new(list_from_vec(params));
                                 let var =
                                     Var::new(self.get_current_namespace_symbol(), sym.clone(), val);
                                 new_env.insert(sym, Value::Var(var).to_rc_value());
                             } else {
-                                panic!("Symbol expected");
+                                return error_fmt!(
+                                    "Symbol expected, found {} instead",
+                                    binds[i + 1].pr_str()
+                                );
                             }
                             break;
                         }
@@ -432,7 +446,7 @@ impl Environment {
                                     Var::new(self.get_current_namespace_symbol(), sym.clone(), val);
                                 new_env.insert(sym, Value::Var(var).to_rc_value());
                             } else {
-                                panic!("Symbol expected");
+                                return error_fmt!("Symbol expected, found {} instead", b.pr_str());
                             }
                         }
                     }

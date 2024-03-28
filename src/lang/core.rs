@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::core;
 use crate::env::Environment;
 use crate::errors;
+use crate::lang::commons;
 use crate::reader;
 use crate::symbol::Symbol;
 use crate::utils::IsOdd;
@@ -57,51 +58,6 @@ macro_rules! fn_is_type {
     }};
 }
 
-/// Returns the file content evaluated, or an error.
-pub fn load_file(path: &String, env: Rc<Environment>) -> ValueRes {
-    match read_to_string(path) {
-        Ok(data) => {
-            let mut r = reader::tokenize(&data, env.clone());
-            let mut res = vec![];
-            let mut last_val;
-
-            // Loop for multi-form evaluation.
-            // We eval each form sequentially to avoid using wrong namespace during syntax quote expansion.
-            // So when we read a file with `(ns..)` at the beninning, all the following code expansions,
-            // happening at reading time, will use the new namespace declared at the top of the file.
-            // This unfortunately forces the declaration to be sequential (require/circular import/declare)
-            // which is doesn't makes the language simple as declaring new methods in Rust.
-            //
-            // doing the following results in wrong namespace applied at `p1`:
-            // (eval (read-string "(do
-            //                       (ns foo.bar)
-            //                       (defn p1 [c] (+ 1 c))
-            //                       (println *ns*)
-            //                       (defmacro x [v] `(p1 v))
-            //                       (x 2))"))
-            //
-            // If we clone the same code in a file and load it instead, the code will be executed correctly.
-            // This is because file-reading process form sequentially while `read-string` just read 1 form and
-            // then eval it.
-            //
-            loop {
-                let v = match reader::read_form(&mut r) {
-                    Ok(s) => {
-                        last_val = core::eval(s, env.clone())?;
-                    }
-                    Err(e) => return Err(e),
-                };
-                res.push(v);
-                if r.peek().is_err() {
-                    break;
-                }
-            }
-            Ok(last_val)
-        }
-        Err(e) => error(&e.to_string()),
-    }
-}
-
 fn add(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if a.len() < 2 {
         return error("Wrong number of arguments passed to +. Expecting at least 2");
@@ -124,9 +80,18 @@ fn add(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     Ok(result)
 }
 
-fn sub(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if a.len() < 2 {
-        return error("Wrong number of arguments passed to -. Expecting at least 2");
+fn minus(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() < 1 {
+        return error("Wrong number of arguments passed to minus. Expecting at least 1");
+    }
+
+    if args.len() == 1 {
+        let ret = match args[0] {
+            Value::Integer(n0) => Ok(Value::Integer(-n0)),
+            Value::Float(n0) => Ok(Value::Float(-n0 as f64)),
+            _ => error("expecting number for all arguments"),
+        };
+        return ret;
     }
 
     fn sub_fn(a0: Value, a1: Value) -> ValueRes {
@@ -139,8 +104,8 @@ fn sub(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
         }
     }
 
-    let mut result = sub_fn(a[0].clone(), a[1].clone())?; // Apply function to the first two arguments
-    for x in a[2..].iter() {
+    let mut result = sub_fn(args[0].clone(), args[1].clone())?; // Apply function to the first two arguments
+    for x in args[2..].iter() {
         result = sub_fn(result, x.clone())?; // Apply function to the previous result and the current argument
     }
     Ok(result)
@@ -772,6 +737,45 @@ fn is_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     Ok(Value::Bool(is))
 }
 
+fn cast(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 2 {
+        return argument_error!("Wrong number of arguments passed to cast. Expecting 2");
+    }
+
+    let class = match args[0].clone() {
+        Value::Str(s) => s,
+        _ => {
+            return error_fmt!(
+                "cast requires string as first parameter, received {}",
+                args[0].pr_str()
+            )
+        }
+    };
+
+    match args[1].clone() {
+        Value::Nil if class == "Nil" => Ok(Value::Nil),
+        Value::Integer(v) if class == "Integer" => Ok(Value::Integer(v)),
+        Value::Float(v) if class == "Float" => Ok(Value::Float(v)),
+        Value::Str(v) if class == "String" => Ok(Value::Str(v)),
+        Value::Bool(v) if class == "Boolean" => Ok(Value::Bool(v)),
+        Value::Char(v) if class == "Character" => Ok(Value::Char(v)),
+        Value::Symbol(v) if class == "Symbol" => Ok(Value::Symbol(v)),
+        Value::Keyword(v) if class == "Keyword" => Ok(Value::Keyword(v)),
+        Value::List(v, m) if class == "List" => Ok(Value::List(v, m)),
+        Value::Vector(v, m) if class == "Vector" => Ok(Value::Vector(v, m)),
+        Value::HashMap(v, m) if class == "HashMap" => Ok(Value::HashMap(v, m)),
+        Value::TreeMap(v, m) if class == "TreeMap" => Ok(Value::TreeMap(v, m)),
+        Value::Set(v, m) if class == "Set" => Ok(Value::Set(v, m)),
+        Value::TreeSet(v, m) if class == "TreeSet" => Ok(Value::TreeSet(v, m)),
+        Value::Func(v, m) if class == "Function" => Ok(Value::Func(v, m)),
+        f @ Value::Lambda { .. } if class == "Function" => Ok(f),
+        Value::Namespace(v) if class == "Namespace" => Ok(Value::Namespace(v)),
+        Value::Atom(v) if class == "Atom" => Ok(Value::Atom(v)),
+        Value::Error(v) if class == "Error" => Ok(Value::Error(v)),
+        _ => error_fmt!("Wrong type passed to cast {}", args[1].pr_str()),
+    }
+}
+
 fn public_q(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
         return error("Wrong number of arguments passed to is-public. Expecting 1");
@@ -898,7 +902,7 @@ fn load_file_fn(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     match args[0] {
         // Read file
         Value::Str(ref str) => {
-            let _ = load_file(str, env)?;
+            let _ = commons::load_file(str, env)?;
             Ok(Value::Nil)
         }
         _ => error!("load-file requires a string"),
@@ -1020,7 +1024,55 @@ fn int(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
 
     match args[0] {
         Value::Float(f) => Ok(Value::Integer(f as i64)),
-        _ => error_fmt!("zero? requires a numeric value"),
+        _ => error_fmt!("int requires a numeric value"),
+    }
+}
+
+fn inc(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return argument_error!("Wrong number of arguments passed to inc. Expecting 1");
+    }
+
+    match args[0] {
+        Value::Integer(i) => Ok(Value::Integer(i + 1)),
+        Value::Float(f) => Ok(Value::Float(f + 1.0)),
+        _ => error_fmt!("inc requires a numeric value"),
+    }
+}
+
+fn dec(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return argument_error!("Wrong number of arguments passed to inc. Expecting 1");
+    }
+
+    match args[0] {
+        Value::Integer(i) => Ok(Value::Integer(i - 1)),
+        Value::Float(f) => Ok(Value::Float(f - 1.0)),
+        _ => error_fmt!("inc requires a numeric value"),
+    }
+}
+
+fn reverse(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return argument_error!("Wrong number of arguments passed to reverse. Expecting 1");
+    }
+
+    match args[0] {
+        Value::List(ref seq, ref m) => {
+            let v = (*seq).clone();
+            Ok(Value::List(
+                Rc::new(v.iter().rev().cloned().collect()),
+                m.clone(),
+            ))
+        }
+        Value::Vector(ref seq, ref m) => {
+            let v = (*seq).clone();
+            Ok(Value::Vector(
+                Rc::new(v.iter().rev().cloned().collect()),
+                m.clone(),
+            ))
+        }
+        _ => error_fmt!("reverse requires a numeric value"),
     }
 }
 
@@ -1039,17 +1091,17 @@ pub fn internal_symbols(env: &Environment) -> Vec<(&'static str, Value)> {
 /// An internal macro, is just a function that receives the arguments not
 /// previously evaluated.
 pub fn core_functions() -> Vec<(&'static str, Value)> {
-    use crate::values::Value::{Bool, Integer, Nil, Str};
+    use crate::values::Value::{Bool, Nil, Str};
     use crate::values::{pr_seq, pr_seq_readability};
 
     vec![
         // MATH
-        ("+", func(add)),
-        ("-", func(sub)),
-        ("*", func(mul)),
-        ("/", func(div)),
-        ("inc", func(fn_t_num!(Integer, |i| { i + 1 }))),
-        ("dec", func(fn_t_num!(Integer, |i| { i - 1 }))),
+        ("add", func(add)),
+        ("minus", func(minus)),
+        ("multiply", func(mul)),
+        ("divide", func(div)),
+        ("inc", func(inc)),
+        ("dec", func(dec)),
         ("zero?", func(zero_q)),
         ("int", func(int)),
         // COMPARISONS
@@ -1119,6 +1171,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("nil?", func(fn_is_type!(Value::Nil))),
         ("true?", func(fn_is_type!(Value::Bool(true)))),
         ("false?", func(fn_is_type!(Value::Bool(false)))),
+        ("reverse", func(reverse)),
         // Symbols
         ("symbol?", func(fn_is_type!(Value::Symbol(_)))),
         ("symbol", func(symbol)),
@@ -1157,6 +1210,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         // GENERICS
         ("type", func(type_fn)),
         ("is?", func(is_q)),
+        ("cast", func(cast)),
         ("public?", macro_fn(public_q)),
         ("private?", macro_fn(private_q)),
         ("intern", func(intern)),
