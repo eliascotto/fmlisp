@@ -24,6 +24,12 @@
 mymod::fn(1, 2, 3)
 ```
 
+## Proposal
+
+Common Lisp is a great and powerful language. But have your tried learning it? It's immense and there's no real guidance on how to do things. The language evolved with libraries but not really syntactially which makes the beginner lost.
+Clojure solve a good part of this problem giving great libraries and modern structure to do things, but still there are so many things to consider and different ways to do a thing which makes the beginner always look for help since the compiler doesn't give you great hints.
+Rust instead, present different data structures and methods but there's always a single idiomatic way to do a thing, not multiple. The imposed design rules (see the concept of _ownership_) are followed by great detailed errors in the compiler and the `rust-analyzer` already give you hints where the code break Rust's rules before you try to run your program.
+
 ## Discussions
 
 ### Fn Traits and Lazy seq

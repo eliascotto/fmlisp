@@ -1073,6 +1073,22 @@ pub fn _dissoc(
     Ok(Value::HashMap(Rc::new(hm), meta.clone()))
 }
 
+pub fn _dissoc_tree_map(
+    mut hm: BTreeMap<Value, Value>,
+    meta: Option<HashMap<Value, Value>>,
+    ks: ExprArgs,
+) -> ValueRes {
+    for k in ks.iter() {
+        match k {
+            Value::Str(_) | Value::Keyword(_) => {
+                hm.remove(k);
+            }
+            _ => return error(&format!("Key type not supported: {}", k.as_str())),
+        }
+    }
+    Ok(Value::TreeMap(Rc::new(hm), meta.clone()))
+}
+
 pub fn func(f: fn(ExprArgs, Rc<Environment>) -> ValueRes) -> Value {
     Value::Func(f, None)
 }

@@ -23,6 +23,7 @@ use crate::values::{format_error, list_from_vec, ToValue, Value};
 #[macro_use]
 mod env;
 mod core;
+#[macro_use]
 mod lang;
 mod namespaces;
 mod reader;

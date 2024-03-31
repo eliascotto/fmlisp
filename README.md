@@ -9,6 +9,17 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 - Prioritize what matters
 - Write maintanable and generic tests
 
+## Language
+
+- Syntactically modern as Clojure
+- Fast since based on Rust
+- No memory management involved
+- Simple language, Clojure gets too complex, it becomes difficult to learn and write proper idiomatic code. In the contrary, Rust is simple and quick to grasp
+  - One performant way to iterate over lists
+  - Deep thinking before adding lazy loading
+  -
+- Keep the core library limited and split the extra in alternative libraries to import separately.
+
 ## TODO
 
 - fix quasiquote to be evaluated
@@ -23,23 +34,25 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 - Add support for keyword arguments
 - Start UI with GPUI
 - Add ns exploring REPL functions as `ns-intern` (in a REPL namespace?)
-- Lazy evaluation
-- Errors with line numbers and/or stack traces. Options to print backtrace in case of errors
+- Better error messages with problem printing, line numbers and guide to fix
+- Function arguments with types as Rust
 - Exception system
-- Lazy sequences `lazy-cons`
+- Load/Save(dump) an environment like CL
 - Clojure-style protocols
 - Full call/cc (call-with-current-continuation) support
 - Explicit TCO (i.e. recur) with tail-position error checking
 - Functions to debug
+- Lazy sequences `lazy-cons` ???
+- Lazy evaluation ???
 - Move List to use proper linked list implementation
-- Load/Save(dump) an environment like CL
 - REPL readline input only if parentesis are fully closed
 
 ## Features
 
+- A great `analyzer` which find errors and missing definitions inside the running REPL before you eval your code
 - Condition system with REPL block (enable/disable) and RESTARTS
 - `ignore-errors` from CL
-- Lazy evaluation
+- Lazy evaluation ???
 - Fast lists structures
 - Immutable data structures
 - Better stacktrace and errors

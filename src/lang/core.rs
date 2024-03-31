@@ -1,3 +1,4 @@
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::read_to_string;
@@ -15,20 +16,10 @@ use crate::utils::IsOdd;
 use crate::values::LispErr::ErrValue;
 use crate::values::{
     self, _assoc, _dissoc, error, func, hash_map_from_vec, list_from_vec, macro_fn, set_from_vec,
-    vector_from_vec, ExprArgs, LispErr, ToValue, Value, ValueRes,
+    vector_from_vec, ExprArgs, LispErr, ToValue, Value, ValueRes, _assoc_tree_map,
+    _dissoc_tree_map,
 };
 use crate::var::Var;
-
-/// Macro that receive an Integer and eval the expr.
-/// Returns an error if not Integer received.
-macro_rules! fn_t_num {
-    ($ret:ident, $fn:expr) => {{
-        |a: ExprArgs, _env: Rc<Environment>| match a[0].clone() {
-            Value::Integer(a0) => Ok($ret($fn(a0))),
-            _ => error("expecting numeric argument"),
-        }
-    }};
-}
 
 /// Macro that receive two Integers and eval the expr
 /// Returns an error if not Integers received.
@@ -56,103 +47,6 @@ macro_rules! fn_is_type {
     ($p:pat if $e:expr, $($ps:pat), *) => {{
       |a: ExprArgs, _env: Rc<Environment>| { Ok(Value::Bool(match a[0] { $p if $e => true, $($ps => true,)* _ => false})) }
     }};
-}
-
-fn add(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if a.len() < 2 {
-        return error("Wrong number of arguments passed to +. Expecting at least 2");
-    }
-
-    fn add_fn(a0: Value, a1: Value) -> ValueRes {
-        match (a0, a1) {
-            (Value::Integer(n0), Value::Integer(n1)) => Ok(Value::Integer(n0 + n1)),
-            (Value::Integer(n0), Value::Float(n1)) => Ok(Value::Float(n0 as f64 + n1)),
-            (Value::Float(n0), Value::Integer(n1)) => Ok(Value::Float(n0 + n1 as f64)),
-            (Value::Float(n0), Value::Float(n1)) => Ok(Value::Float(n0 + n1)),
-            _ => error("expecting number for all arguments"),
-        }
-    }
-
-    let mut result = add_fn(a[0].clone(), a[1].clone())?; // Apply function to the first two arguments
-    for x in a[2..].iter() {
-        result = add_fn(result, x.clone())?; // Apply function to the previous result and the current argument
-    }
-    Ok(result)
-}
-
-fn minus(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if args.len() < 1 {
-        return error("Wrong number of arguments passed to minus. Expecting at least 1");
-    }
-
-    if args.len() == 1 {
-        let ret = match args[0] {
-            Value::Integer(n0) => Ok(Value::Integer(-n0)),
-            Value::Float(n0) => Ok(Value::Float(-n0 as f64)),
-            _ => error("expecting number for all arguments"),
-        };
-        return ret;
-    }
-
-    fn sub_fn(a0: Value, a1: Value) -> ValueRes {
-        match (a0, a1) {
-            (Value::Integer(n0), Value::Integer(n1)) => Ok(Value::Integer(n0 - n1)),
-            (Value::Integer(n0), Value::Float(n1)) => Ok(Value::Float(n0 as f64 - n1)),
-            (Value::Float(n0), Value::Integer(n1)) => Ok(Value::Float(n0 - n1 as f64)),
-            (Value::Float(n0), Value::Float(n1)) => Ok(Value::Float(n0 - n1)),
-            _ => error("expecting number for all arguments"),
-        }
-    }
-
-    let mut result = sub_fn(args[0].clone(), args[1].clone())?; // Apply function to the first two arguments
-    for x in args[2..].iter() {
-        result = sub_fn(result, x.clone())?; // Apply function to the previous result and the current argument
-    }
-    Ok(result)
-}
-
-fn mul(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if a.len() < 2 {
-        return error("Wrong number of arguments passed to *. Expecting at least 2");
-    }
-
-    fn mul_fn(a0: Value, a1: Value) -> ValueRes {
-        match (a0, a1) {
-            (Value::Integer(n0), Value::Integer(n1)) => Ok(Value::Integer(n0 * n1)),
-            (Value::Integer(n0), Value::Float(n1)) => Ok(Value::Float(n0 as f64 * n1)),
-            (Value::Float(n0), Value::Integer(n1)) => Ok(Value::Float(n0 * n1 as f64)),
-            (Value::Float(n0), Value::Float(n1)) => Ok(Value::Float(n0 * n1)),
-            _ => error("expecting number for all arguments"),
-        }
-    }
-
-    let mut result = mul_fn(a[0].clone(), a[1].clone())?; // Apply function to the first two arguments
-    for x in a[2..].iter() {
-        result = mul_fn(result, x.clone())?; // Apply function to the previous result and the current argument
-    }
-    Ok(result)
-}
-
-fn div(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if a.len() < 2 {
-        return error("Wrong number of arguments passed to /. Expecting at least 2");
-    }
-
-    fn div_fn(a0: Value, a1: Value) -> ValueRes {
-        match (a0, a1) {
-            (Value::Integer(n0), Value::Integer(n1)) => Ok(Value::Integer(n0 / n1)),
-            (Value::Integer(n0), Value::Float(n1)) => Ok(Value::Float(n0 as f64 / n1)),
-            (Value::Float(n0), Value::Integer(n1)) => Ok(Value::Float(n0 / n1 as f64)),
-            (Value::Float(n0), Value::Float(n1)) => Ok(Value::Float(n0 / n1)),
-            _ => error("expecting number for all arguments"),
-        }
-    }
-
-    let mut result = div_fn(a[0].clone(), a[1].clone())?; // Apply function to the first two arguments
-    for x in a[2..].iter() {
-        result = div_fn(result, x.clone())?; // Apply function to the previous result and the current argument
-    }
-    Ok(result)
 }
 
 fn read_string(a: ExprArgs, env: Rc<Environment>) -> ValueRes {
@@ -426,6 +320,9 @@ fn assoc(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
         Value::HashMap(ref hm, ref meta) => {
             _assoc((**hm).clone(), (*meta).clone(), a[1..].to_vec())
         }
+        Value::TreeMap(ref hm, ref meta) => {
+            _assoc_tree_map((**hm).clone(), (*meta).clone(), a[1..].to_vec())
+        }
         _ => error("Cannot use assoc on non-HashMap"),
     }
 }
@@ -434,6 +331,9 @@ fn dissoc(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     match a[0] {
         Value::HashMap(ref hm, ref meta) => {
             _dissoc((**hm).clone(), (*meta).clone(), a[1..].to_vec())
+        }
+        Value::TreeMap(ref hm, ref meta) => {
+            _dissoc_tree_map((**hm).clone(), (*meta).clone(), a[1..].to_vec())
         }
         _ => error("Cannot use dissoc on non-HashMap"),
     }
@@ -448,6 +348,14 @@ fn get(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             None => Ok(Value::Nil),
         },
         (Value::HashMap(ref hm, _), Value::Keyword(_)) => match hm.get(&key_arg) {
+            Some(v) => Ok(v.clone()),
+            None => Ok(Value::Nil),
+        },
+        (Value::TreeMap(ref hm, _), Value::Str(_)) => match hm.get(&key_arg) {
+            Some(v) => Ok(v.clone()),
+            None => Ok(Value::Nil),
+        },
+        (Value::TreeMap(ref hm, _), Value::Keyword(_)) => match hm.get(&key_arg) {
             Some(v) => Ok(v.clone()),
             None => Ok(Value::Nil),
         },
@@ -1005,53 +913,6 @@ fn compare(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     Ok(Value::Integer(args[0].cmp(&args[1]) as i64))
 }
 
-fn zero_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if args.len() != 1 {
-        return argument_error!("Wrong number of arguments passed to zero?. Expecting 1");
-    }
-
-    match args[0] {
-        Value::Integer(i) => Ok(Value::Bool(i == 0)),
-        Value::Float(f) => Ok(Value::Bool(f == 0.0)),
-        _ => error_fmt!("zero? requires a numeric value"),
-    }
-}
-
-fn int(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if args.len() != 1 {
-        return argument_error!("Wrong number of arguments passed to int. Expecting 1");
-    }
-
-    match args[0] {
-        Value::Float(f) => Ok(Value::Integer(f as i64)),
-        _ => error_fmt!("int requires a numeric value"),
-    }
-}
-
-fn inc(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if args.len() != 1 {
-        return argument_error!("Wrong number of arguments passed to inc. Expecting 1");
-    }
-
-    match args[0] {
-        Value::Integer(i) => Ok(Value::Integer(i + 1)),
-        Value::Float(f) => Ok(Value::Float(f + 1.0)),
-        _ => error_fmt!("inc requires a numeric value"),
-    }
-}
-
-fn dec(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
-    if args.len() != 1 {
-        return argument_error!("Wrong number of arguments passed to inc. Expecting 1");
-    }
-
-    match args[0] {
-        Value::Integer(i) => Ok(Value::Integer(i - 1)),
-        Value::Float(f) => Ok(Value::Float(f - 1.0)),
-        _ => error_fmt!("inc requires a numeric value"),
-    }
-}
-
 fn reverse(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
         return argument_error!("Wrong number of arguments passed to reverse. Expecting 1");
@@ -1076,6 +937,26 @@ fn reverse(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     }
 }
 
+fn pop(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return argument_error!("Wrong number of arguments passed to pop. Expecting 1");
+    }
+
+    match args[0] {
+        Value::List(ref seq, ref m) => {
+            // Remove first
+            let mut v = (**seq).clone();
+            Ok(Value::List(Rc::new(v.drain(1..).collect()), m.clone()))
+        }
+        Value::Vector(ref seq, ref m) => Ok(Value::Vector(
+            // Remove last
+            Rc::new(seq[..seq.len() - 1].to_vec()),
+            m.clone(),
+        )),
+        _ => error_fmt!("reverse requires a numeric value"),
+    }
+}
+
 /// Returns a vector of string/values.
 pub fn internal_symbols(env: &Environment) -> Vec<(&'static str, Value)> {
     vec![("*ns*", {
@@ -1095,15 +976,6 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
     use crate::values::{pr_seq, pr_seq_readability};
 
     vec![
-        // MATH
-        ("add", func(add)),
-        ("minus", func(minus)),
-        ("multiply", func(mul)),
-        ("divide", func(div)),
-        ("inc", func(inc)),
-        ("dec", func(dec)),
-        ("zero?", func(zero_q)),
-        ("int", func(int)),
         // COMPARISONS
         ("=", func(equiv)),
         ("<", func(fn_t_num_num!(Bool, |i, j| { i < j }))),
@@ -1145,6 +1017,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         // COLLECTIONS
         ("count", func(count)),
         ("empty?", func(empty_q)),
+        ("pop", func(pop)),
         ("list", func(|a, _| Ok(list_from_vec(a)))),
         ("list?", func(fn_is_type!(Value::List(_, _)))),
         (
@@ -1194,7 +1067,10 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("contains?", func(contains_q)),
         ("keys", func(keys)),
         ("vals", func(vals)),
-        ("number?", func(fn_is_type!(Value::Integer(_)))),
+        (
+            "number?",
+            func(fn_is_type!(Value::Integer(_), Value::Float(_))),
+        ),
         (
             "fn?",
             func(fn_is_type!(Value::Lambda{is_macro,..} if !is_macro, Value::Func(_,_))),

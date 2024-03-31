@@ -620,24 +620,31 @@
    `(let [or# ~x]
       (if or# or# (or ~@next)))))
 
-(def
-  ^{:arglists '([num])
-    :doc "Returns true if num is zero, else false"
-    :added "1.0"}
-  zero? fmlisp.lang/zero?)
+(defn pos?
+  "Returns true if num is greater than zero, else false"
+  {:added "1.0"}
+  [num] (fmlisp.lang.numbers/pos? num))
 
-(def
-  ^{:arglists: '([coll])
-    :doc "Returns the number of items in the collection. (count nil) returns
-         0. Also works on strings, sets and Maps"
-    :added "1.0"}
-  count fmlisp.lang/count)
+(defn neg?
+  "Returns true if num is less than zero, else false"
+  {:added "1.0"}
+  [num] (fmlisp.lang.numbers/neg? num))
 
-(def
-  ^{:arglists: '([n])
-    :doc "Coerce to int"
-    :added "1.0"}
-  int fmlisp.lang/int)
+(defn zero?
+  "Returns true if num is zero, else false"
+  {:added "1.0"}
+  [num] (fmlisp.lang.numbers/zero? num))
+
+(defn count
+  "Returns the number of items in the collection. (count nil) returns
+  0. Also works on strings, sets and Maps"
+  {:added "1.0"}
+  [coll] (fmlisp.lang/count coll))
+
+(defn int
+  "Coerce to int"
+  {:added "1.0"}
+  [n] (fmlisp.lang.numbers/int n))
 
 (defn nth
   "Returns the value at the index. get returns nil if index out of
@@ -655,14 +662,14 @@
     :doc "Returns a number one greater than num. Does not auto-promote
     longs, will throw on overflow."
     :added "1.0"}
-  inc fmlisp.lang/inc)
+  inc fmlisp.lang.numbers/inc)
 
 (def
   ^{:arglists: '([x])
     :doc "Returns a number one less than num. Does not auto-promote
     longs, will throw on overflow."
     :added "1.0"}
-  dec fmlisp.lang/dec)
+  dec fmlisp.lang.numbers/dec)
 
 (def
   ^{:argslists: '([coll])
@@ -695,7 +702,7 @@
   {:added "1.2"}
   ([] 0)
   ([x] (cast Number x))
-  ([x y] (fmlisp.lang/add x y))
+  ([x y] (fmlisp.lang.numbers/add x y))
   ([x y & more]
      (reduce1 + (+ x y) more)))
 
@@ -705,7 +712,7 @@
   {:added "1.2"}
   ([] 1)
   ([x] (cast Number x))
-  ([x y] (fmlisp.lang/multiply x y))
+  ([x y] (fmlisp.lang.numbers/multiply x y))
   ([x y & more]
      (reduce1 * (* x y) more)))
 
@@ -714,7 +721,7 @@
   else returns numerator divided by all of the denominators."
   {:added "1.0"}
   ([x] (/ 1 x))
-  ([x y] (fmlisp.lang/divide x y))
+  ([x y] (fmlisp.lang.numbers/divide x y))
   ([x y & more]
    (reduce1 / (/ x y) more)))
 
@@ -723,8 +730,8 @@
   the ys from x and returns the result. Does not auto-promote
   longs, will throw on overflow. See also: -'"
   {:added "1.2"}
-  ([x] (fmlisp.lang/minus x))
-  ([x y] (. clojure.lang.Numbers (minus x y)))
+  ([x] (fmlisp.lang.numbers/minus x))
+  ([x y] (fmlisp.lang.numbers/minus x y))
   ([x y & more]
      (reduce1 - (- x y) more)))
 
@@ -802,3 +809,218 @@
        (== y (first more) (next more))
        (== y (first more)))
      false)))
+
+(defn max
+  "Returns the greatest of the nums."
+  {:added "1.0"}
+  ([x] x)
+  ([x y] (fmlisp.lang.numbers/max x y))
+  ([x y & more]
+   (reduce1 max (max x y) more)))
+
+(defn min
+  "Returns the least of the nums."
+  {:added "1.0"}
+  ([x] x)
+  ([x y] (fmlisp.lang.numbers/min x y))
+  ([x y & more]
+   (reduce1 min (min x y) more)))
+
+(defn abs
+  {:doc "Returns the absolute value of a.
+  If a is Integer/MIN_VALUE => Integer/MIN_VALUE
+  If a is a Float and zero => +0.0
+  If a is a Float and ##Inf or ##-Inf => ##Inf
+  If a is a Float and ##NaN => ##NaN"
+   :inline-arities #{1}
+   :inline (fn [a] `(fmlisp.lang.numbers/abs ~a))
+   :added "1.11"}
+  [a] (fmlisp.lang.numbers/abs a))
+
+(defn quot
+  "quot[ient] of dividing numerator by denominator."
+  {:added "1.0"
+   :static true
+   :inline (fn [x y] `(fmlisp.lang.numbers/quot ~x ~y))}
+  [num div]
+  (fmlisp.lang.numbers/quot num div))
+
+(defn rem
+  "remainder of dividing numerator by denominator."
+  {:added "1.0"
+   :static true
+   :inline (fn [x y] `(fmlisp.lang.numbers/reminder ~x ~y))}
+  [num div]
+    (fmlisp.lang.numbers/reminder num div))
+
+;;
+;; Bits operations
+;;
+
+(defn bit-not
+  "Bitwise complement"
+  {:inline (fn [x] `(fmlisp.lang.numbers/bit-not ~x))
+   :added "1.0"}
+  [x] (fmlisp.lang.numbers/bit-not x))
+
+
+(defn bit-and
+  "Bitwise and"
+  {:added "1.0"}
+  ([x y] (fmlisp.lang.numbers/bit-and x y))
+  ([x y & more]
+    (reduce1 bit-and (bit-and x y) more)))
+
+(defn bit-or
+  "Bitwise or"
+  {:added "1.0"}
+  ([x y] (fmlisp.lang.numbers/bit-or x y))
+  ([x y & more]
+    (reduce1 bit-or (bit-or x y) more)))
+
+(defn bit-xor
+  "Bitwise exclusive or"
+  {:added "1.0"}
+  ([x y] (fmlisp.lang.numbers/bit-xor x y))
+  ([x y & more]
+    (reduce1 bit-xor (bit-xor x y) more)))
+
+(defn bit-and-not
+  "Bitwise and with complement"
+  {:added "1.0"}
+  ([x y] (fmlisp.lang.numbers/bit-and-not x y))
+  ([x y & more]
+    (reduce1 bit-and-not (bit-and-not x y) more)))
+
+(defn bit-clear
+  "Clear bit at index n"
+  {:added "1.0"}
+  [x n] (fmlisp.lang.numbers/bit-clear x n))
+
+(defn bit-set
+  "Set bit at index n"
+  {:added "1.0"}
+  [x n] (fmlisp.lang.numbers/bit-set x n))
+
+(defn bit-flip
+  "Flip bit at index n"
+  {:added "1.0"}
+  [x n] (fmlisp.lang.numbers/bit-flip x n))
+
+(defn bit-test
+  "Test bit at index n"
+  {:added "1.0"}
+  [x n] (fmlisp.lang.numbers/bit-test x n))
+
+(defn bit-shift-left
+  "Bitwise shift left"
+  {:inline (fn [x n] `(fmlisp.lang.numbers/bit-shift-left ~x ~n))
+   :added "1.0"}
+  [x n] (fmlisp.lang.numbers/bit-shift-left x n))
+
+(defn bit-shift-right
+  "Bitwise shift right"
+  {:inline (fn [x n] `(fmlisp.lang.numbers/bit-shift-right ~x ~n))
+   :added "1.0"}
+  [x n] (fmlisp.lang.numbers/bit-shift-right x n))
+
+(defn int?
+  "Return true if x is a fixed precision integer"
+  {:added "1.9"}
+  [x] (fmlisp.lang.numbers/int? x))
+
+(defn pos-int?
+  "Return true if x is a positive fixed precision integer"
+  {:added "1.9"}
+  [x] (and (int? x)
+           (pos? x)))
+
+(defn neg-int?
+  "Return true if x is a negative fixed precision integer"
+  {:added "1.9"}
+  [x] (and (int? x)
+           (neg? x)))
+
+(defn complement
+  "Takes a fn f and returns a fn that takes the same arguments as f,
+  has the same effects, if any, and returns the opposite truth value."
+  {:added "1.0"
+   :static true}
+  [f]
+  (fn
+    ([] (not (f)))
+    ([x] (not (f x)))
+    ([x y] (not (f x y)))
+    ([x y & zs] (not (apply f x y zs)))))
+
+(defn constantly
+  "Returns a function that takes any number of arguments and returns x."
+  {:added "1.0"
+   :static true}
+  [x] (fn [& args] x))
+
+(defn identity
+  "Returns its argument."
+  {:added "1.0"
+   :static true}
+  [x] x)
+
+(defn pop
+  "For a list, returns a new list without the first
+  item, for a vector, returns a new vector without the last item. If
+  the collection is empty, throws an exception.  Note - not the same
+  as next/butlast."
+  {:added "1.0"
+   :static true}
+  [coll] (fmlisp.lang/pop coll))
+
+(defn contains?
+  "Returns true if key is present in the given collection, otherwise
+  returns false.  Note that for numerically indexed collections like
+  vectors and Java arrays, this tests if the numeric key is within the
+  range of indexes. 'contains?' operates constant or logarithmic time;
+  it will not perform a linear search for a value.  See also 'some'."
+  {:added "1.0"
+   :static true}
+  [coll key] (fmlisp.lang/contains? coll key))
+
+(defn get
+  "Returns the value mapped to key, not-found or nil if key not present
+  in associative collection, set, string, array, or ILookup instance."
+  {:inline (fn  [m k & nf] `(fmlisp.lang/get ~m ~k ~@nf))
+   :inline-arities #{2 3}
+   :added "1.0"}
+  ([map key]
+   (fmlisp.lang/get map key))
+  ([map key not-found]
+   (fmlisp.lang/get map key not-found)))
+
+(defn dissoc
+  "dissoc[iate]. Returns a new map of the same (hashed/sorted) type,
+  that does not contain a mapping for key(s)."
+  {:added "1.0"
+   :static true}
+  ([map] map)
+  ([map key]
+   (fmlisp.lang/dissoc map key)))
+  ([map key & ks]
+   (let [ret (dissoc map key)]
+     (if ks
+       (dissoc ret (first ks) (next ks))
+       ret))))
+
+(defn disj
+  "disj[oin]. Returns a new set of the same (hashed/sorted) type, that
+  does not contain key(s)."
+  {:added "1.0"
+   :static true}
+  ([set] set)
+  ([set key]
+   (when set
+     (fmlisp.lang/disjoin key)))
+  ([set key & ks]
+   (when set
+     (let [ret (disj set key)]
+       (if ks
+         (disj ret (first ks) (next ks))
+         ret)))))
