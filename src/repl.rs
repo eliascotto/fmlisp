@@ -774,11 +774,65 @@ mod tests {
     #[test]
     fn test_starts_with_q() {
         let repl = Repl::default().unwrap();
-        assert_eq!(repl.rep("(starts-with? \"beer\" \"be\")").unwrap(), "true");
-        assert_eq!(repl.rep("(starts-with? \"beer\" \"b\")").unwrap(), "true");
-        assert_eq!(repl.rep("(starts-with? \"beer\" \"e\")").unwrap(), "false");
-        assert_eq!(repl.rep("(starts-with? \"a\" \"ab\")").unwrap(), "false");
-        assert_eq!(repl.rep("(starts-with? \"ab\" \"abc\")").unwrap(), "false");
+        assert_eq!(
+            repl.rep("(fmlisp.string/starts-with? \"beer\" \"be\")")
+                .unwrap(),
+            "true"
+        );
+        assert_eq!(
+            repl.rep("(fmlisp.string/starts-with? \"beer\" \"b\")")
+                .unwrap(),
+            "true"
+        );
+        assert_eq!(
+            repl.rep("(fmlisp.string/starts-with? \"beer\" \"e\")")
+                .unwrap(),
+            "false"
+        );
+        assert_eq!(
+            repl.rep("(fmlisp.string/starts-with? \"a\" \"ab\")")
+                .unwrap(),
+            "false"
+        );
+        assert_eq!(
+            repl.rep("(fmlisp.string/starts-with? \"ab\" \"abc\")")
+                .unwrap(),
+            "false"
+        );
+    }
+
+    #[test]
+    fn test_ends_with() {
+        let repl = Repl::default().unwrap();
+
+        assert_eq!(
+            repl.rep("(fmlisp.string/ends-with? \"beer\" \"er\")")
+                .unwrap(),
+            "true"
+        );
+
+        assert_eq!(
+            repl.rep("(fmlisp.string/ends-with? \"beer\" \"r\")")
+                .unwrap(),
+            "true"
+        );
+
+        assert_eq!(
+            repl.rep("(fmlisp.string/ends-with? \"beer\" \"b\")")
+                .unwrap(),
+            "false"
+        );
+
+        assert_eq!(
+            repl.rep("(fmlisp.string/ends-with? \"a\" \"ab\")").unwrap(),
+            "false"
+        );
+
+        assert_eq!(
+            repl.rep("(fmlisp.string/ends-with? \"ab\" \"abc\")")
+                .unwrap(),
+            "false"
+        );
     }
 
     #[test]
@@ -812,10 +866,42 @@ mod tests {
     }
 
     #[test]
+    fn test_is_even_odd() {
+        let repl = Repl::default().unwrap();
+
+        assert_eq!(repl.rep("(even? 0)").unwrap(), "true");
+        assert_eq!(repl.rep("(even? 2)").unwrap(), "true");
+        assert_eq!(repl.rep("(even? 42)").unwrap(), "true");
+        assert_eq!(repl.rep("(even? -10)").unwrap(), "true");
+
+        assert_eq!(repl.rep("(even? 1)").unwrap(), "false");
+        assert_eq!(repl.rep("(even? 3)").unwrap(), "false");
+        assert_eq!(repl.rep("(even? 41)").unwrap(), "false");
+        assert_eq!(repl.rep("(even? -11)").unwrap(), "false");
+
+        assert_eq!(repl.rep("(odd? 1)").unwrap(), "true");
+        assert_eq!(repl.rep("(odd? 3)").unwrap(), "true");
+        assert_eq!(repl.rep("(odd? 41)").unwrap(), "true");
+        assert_eq!(repl.rep("(odd? -11)").unwrap(), "true");
+
+        assert_eq!(repl.rep("(odd? 0)").unwrap(), "false");
+        assert_eq!(repl.rep("(odd? 2)").unwrap(), "false");
+        assert_eq!(repl.rep("(odd? 42)").unwrap(), "false");
+        assert_eq!(repl.rep("(odd? -10)").unwrap(), "false");
+    }
+
+    #[test]
+    fn test_some() {
+        let repl = Repl::default().unwrap();
+        assert_eq!(repl.rep("(some even? '(1 2 3 4))").unwrap(), "true");
+        assert_eq!(repl.rep("(some true? [false false false])").unwrap(), "nil");
+    }
+
+    #[test]
     fn test_invoke_var() {
         let repl = Repl::default().unwrap();
         assert_eq!(
-            repl.rep("(intern 'user 'sum (fn [a b c] (+ a b c)))")
+            repl.rep("(intern (the-ns 'user) 'sum (fn [a b c] (+ a b c)))")
                 .unwrap(),
             "#'user/sum"
         );

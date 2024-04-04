@@ -22,10 +22,8 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 
 ## TODO
 
-- fix quasiquote to be evaluated
-- add gensym support for syntax-quote `
-- add support for #\_ wich is comment entire form
-- Add support for regex and regex parrtern `#"pattern"`
+- Add support for _out_ variable and printing
+- fixing tests
 - `refer` function
 - `require` with file loading
 - `doc`

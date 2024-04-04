@@ -1,4 +1,3 @@
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::read_to_string;
@@ -765,8 +764,8 @@ fn intern(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
         }
     } else {
         match (args[0].clone(), args[1].clone()) {
-            (Value::Symbol(ref ns), Value::Symbol(ref name)) => {
-                let sym = Symbol::new_with_ns(&name.name, Some(&ns.name));
+            (Value::Namespace(ref ns), Value::Symbol(ref name)) => {
+                let sym = Symbol::new_with_ns(&name.name, Some(&ns.borrow().name_as_str()));
                 let val = if let Some(v) = args.get(2) {
                     v.clone()
                 } else {
@@ -783,7 +782,7 @@ fn intern(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
                 };
                 Ok(var)
             }
-            _ => error!("intern requires a symbol for namespace and a symbol for var name"),
+            _ => error!("intern requires a namespace and a symbol for var name"),
         }
     }
 }
@@ -957,6 +956,39 @@ fn pop(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     }
 }
 
+fn ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
+    if args.len() != 1 {
+        return error("Wrong number of arguments passed to ns. Expecting 1");
+    }
+    match args[0] {
+        Value::Symbol(ref sym) => {
+            env.change_or_create_namespace(&sym);
+            Ok(Value::Nil)
+        }
+        _ => error!("ns requires symbol"),
+    }
+}
+
+fn format(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if a.is_empty() {
+        return error("Wrong number of arguments passed to format. Expecting at least 1");
+    }
+    match a[0] {
+        Value::Str(ref s) => {
+            let args = match a[1].clone() {
+                Value::List(l, _) => l.iter().map(|v| v.to_string()).collect(),
+                _ => return error_fmt!("Missing list as second format argument"),
+            };
+            let formatted = commons::format_runtime(s, &args);
+            match formatted {
+                Ok(fmt) => Ok(Value::Str(fmt)),
+                Err(e) => Err(e),
+            }
+        }
+        _ => error!("format requires a string"),
+    }
+}
+
 /// Returns a vector of string/values.
 pub fn internal_symbols(env: &Environment) -> Vec<(&'static str, Value)> {
     vec![("*ns*", {
@@ -1008,6 +1040,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("read-string", func(read_string)),
         ("readline", func(readline)),
         ("slurp", func(slurp)),
+        ("format", func(format)),
         // ATOM
         ("atom", func(atom)),
         ("atom?", func(fn_is_type!(Value::Atom(_)))),
@@ -1084,6 +1117,7 @@ pub fn core_functions() -> Vec<(&'static str, Value)> {
         ("meta", func(meta)),
         ("with-meta", func(with_meta)),
         // GENERICS
+        ("ns", macro_fn(ns)),
         ("type", func(type_fn)),
         ("is?", func(is_q)),
         ("cast", func(cast)),

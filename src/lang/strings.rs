@@ -1,6 +1,8 @@
-use crate::env::Environment;
-use crate::values::{error, func, ExprArgs, Value, ValueRes};
 use std::rc::Rc;
+
+use crate::env::Environment;
+use crate::lang::commons;
+use crate::values::{error, func, ExprArgs, Value, ValueRes};
 
 fn starts_with_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if args.len() != 2 {
@@ -9,6 +11,19 @@ fn starts_with_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     match (args[0].clone(), args[1].clone()) {
         (Value::Str(s), Value::Str(substr)) => {
             let res = s.starts_with(&substr);
+            Ok(Value::Bool(res))
+        }
+        _ => error("Expecting two strings"),
+    }
+}
+
+fn ends_with_q(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 2 {
+        return error("Wrong number of arguments passed to ends-with?. Expecting 2");
+    }
+    match (args[0].clone(), args[1].clone()) {
+        (Value::Str(s), Value::Str(substr)) => {
+            let res = s.ends_with(&substr);
             Ok(Value::Bool(res))
         }
         _ => error("Expecting two strings"),
@@ -46,7 +61,12 @@ fn concat_str(a: ExprArgs, _env: Rc<Environment>) -> ValueRes {
 pub fn string_functions() -> Vec<(&'static str, Value)> {
     vec![
         ("starts-with?", func(starts_with_q)),
+        ("ends-with?", func(ends_with_q)),
         ("index-of", func(index_of)),
-        ("concat-str", func(concat_str)),
+        ("concat", func(concat_str)),
     ]
+}
+
+pub fn load(env: Rc<Environment>) {
+    commons::load_module(env, "fmlisp.lang.string", string_functions());
 }

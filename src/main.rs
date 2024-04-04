@@ -1,5 +1,6 @@
 extern crate dotenvy;
 extern crate fnv;
+extern crate formatx;
 extern crate if_chain;
 extern crate itertools;
 extern crate regex;

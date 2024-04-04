@@ -1,0 +1,13 @@
+(ns fmlisp.string)
+
+(defn starts-with?
+  "True if s starts with substr."
+  {:added "1.0"}
+  [s substr]
+  (fmlisp.lang.string/starts-with? s substr))
+
+(defn ends-with?
+  "True if s ends with substr."
+  {:added "1.0"}
+  [s substr]
+  (fmlisp.lang.string/ends-with? s substr))

@@ -412,22 +412,36 @@ impl Environment {
     pub fn bind(&self, mbinds: Rc<Value>, exprs: Vec<Value>) -> Result<Rc<Environment>, LispErr> {
         let new_env = Environment::new_local_environment(Rc::new((*self).clone()));
         match (*mbinds).clone() {
-            Value::List(binds, _) | Value::Vector(binds, _) => {
+            Value::Vector(binds, _) => {
                 for (i, b) in binds.iter().enumerate() {
                     match b {
                         Value::Symbol(s) if s.name() == "&" => {
                             if let Value::Symbol(sym) = binds[i + 1].clone() {
                                 let mut params = exprs[i..].to_vec();
+                                let mut is_nil = false;
 
-                                if_chain! {
-                                    if params.len() == 1;
-                                    if let Value::List(l, _) = params[0].clone();
-                                    then {
-                                        params = l.to_vec();
+                                // Editing binding behaviour for variadic functions.
+                                // This is due to the fact that FMLisp supports TCO and
+                                // doesn't use `recur` for recursive functions.
+                                // We need to manage special cases:
+                                //   - functions that return nil
+                                //   - functions that return a list should not become a list of lists
+                                if params.len() == 1 {
+                                    match params[0].clone() {
+                                        // If there's a single list of params in a variadic function,
+                                        // convert is to a simple list.
+                                        Value::List(l, _) => params = l.to_vec(),
+                                        // If a single value that is nil, set value to Nil
+                                        Value::Nil => is_nil = true,
+                                        _ => {}
                                     }
                                 }
 
-                                let val = Rc::new(list_from_vec(params));
+                                let val = if is_nil {
+                                    Rc::new(Value::Nil)
+                                } else {
+                                    Rc::new(list_from_vec(params))
+                                };
                                 let var =
                                     Var::new(self.get_current_namespace_symbol(), sym.clone(), val);
                                 new_env.insert(sym, Value::Var(var).to_rc_value());
@@ -453,7 +467,7 @@ impl Environment {
                 }
                 Ok(Rc::new(new_env))
             }
-            _ => Err(ErrString("env_bind binds not List/Vector".to_string())),
+            _ => Err(ErrString("env_bind binds not a Vector".to_string())),
         }
     }
 

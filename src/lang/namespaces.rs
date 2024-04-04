@@ -1,27 +1,16 @@
-use crate::env::Environment;
-use crate::keyword::Keyword;
-use crate::symbol::Symbol;
-use crate::utils::IsOdd;
-use crate::values::{
-    error, func, list_from_vec, macro_fn, ExprArgs, LispErr, ToValue, Value, ValueRes,
-};
 use if_chain::if_chain;
 use itertools::Itertools;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-fn ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
-    if args.len() != 1 {
-        return error("Wrong number of arguments passed to ns. Expecting 1");
-    }
-    match args[0] {
-        Value::Symbol(ref sym) => {
-            env.change_or_create_namespace(&sym);
-            Ok(Value::Nil)
-        }
-        _ => error!("ns requires symbol"),
-    }
-}
+use crate::env::Environment;
+use crate::keyword::Keyword;
+use crate::lang::commons;
+use crate::symbol::Symbol;
+use crate::utils::IsOdd;
+use crate::values::{
+    error, func, list_from_vec, macro_fn, ExprArgs, LispErr, ToValue, Value, ValueRes,
+};
 
 fn find_ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
@@ -86,7 +75,7 @@ fn get_ns(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
 
 fn ns_map(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     if args.len() != 1 {
-        return error("Wrong number of arguments passed to ns-mappings. Expecting 1");
+        return error("Wrong number of arguments passed to ns-map. Expecting 1");
     }
 
     match args[0] {
@@ -107,7 +96,7 @@ fn ns_map(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
 
 fn ns_unmap(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
     if args.len() != 2 {
-        return error("Wrong number of arguments passed to ns-mappings. Expecting 2");
+        return error("Wrong number of arguments passed to ns-unmap. Expecting 2");
     }
 
     match args[0] {
@@ -119,6 +108,17 @@ fn ns_unmap(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
             _ => error!("ns-unmap requires symbol as second parameter"),
         },
         _ => error!("ns-unmap requires namespace as first parameter"),
+    }
+}
+
+fn ns_name(args: ExprArgs, _env: Rc<Environment>) -> ValueRes {
+    if args.len() != 2 {
+        return error("Wrong number of arguments passed to ns-name. Expecting 2");
+    }
+
+    match args[0] {
+        Value::Namespace(ref ns) => Ok(Value::Symbol(ns.borrow().name.clone())),
+        _ => error!("ns-name requires namespace as first parameter"),
     }
 }
 
@@ -170,15 +170,19 @@ fn refer(args: ExprArgs, env: Rc<Environment>) -> ValueRes {
     Ok(Value::Nil)
 }
 
-pub fn namespace_functions() -> Vec<(&'static str, Value)> {
+fn namespace_functions() -> Vec<(&'static str, Value)> {
     vec![
-        ("ns", macro_fn(ns)),
         ("find-ns", func(find_ns)),
         ("all-ns", func(all_ns)),
         ("the-ns", func(the_ns)),
         ("ns-map", func(ns_map)),
         ("ns-unmap", func(ns_unmap)),
+        ("ns-name", func(ns_name)),
         ("get-ns", func(get_ns)),
         ("refer", func(refer)),
     ]
+}
+
+pub fn load(env: Rc<Environment>) {
+    commons::load_module(env, "fmlisp.lang.namespace", namespace_functions());
 }

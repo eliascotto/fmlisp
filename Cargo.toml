@@ -13,3 +13,4 @@ rustyline = "13.0.0"
 if_chain = "1.0.2"   # to remove
 dotenvy = "0.15.7"
 termion = "3.0.0"
+formatx = "0.2.2"

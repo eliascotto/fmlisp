@@ -234,6 +234,7 @@
   assert-valid-fdecl (fn [fdecl]))
 
 (def println fmlisp.lang/println)
+(def prn fmlisp.lang/println)
 
 (def
   ^{:private true}
@@ -301,7 +302,7 @@
                    (if (if (fmlisp.lang/= 'fn ifn)
                          (if (is? 'Symbol iname) false true))
                     ;; inserts the same fn name to the inline fn if it does not have one
-                     (assoc m :inline (cons ifn (cons (fmlisp.lang/intern (fmlisp.lang/concat-str (fmlisp.lang/get-name name) "__inliner"))
+                     (assoc m :inline (cons ifn (cons (fmlisp.lang/intern (fmlisp.lang.string/concat (fmlisp.lang/get-name name) "__inliner"))
                                                       (next inline))))
                      m))
                m (conj (if (meta name) (meta name) {}) m)]
@@ -853,6 +854,13 @@
   [num div]
     (fmlisp.lang.numbers/reminder num div))
 
+(defn type
+  "Returns the :type metadata of x, or its Type if none"
+  {:added "1.0"
+   :static true}
+  [x]
+  (or (get (meta x) :type) (fmlisp.lang/type x)))
+
 ;;
 ;; Bits operations
 ;;
@@ -941,6 +949,20 @@
   [x] (and (int? x)
            (neg? x)))
 
+(defn even?
+  "Returns true if n is even, throws an exception if n is not an integer"
+  {:added "1.0"
+   :static true}
+   [n] (if (int? n)
+        (zero? (bit-and n 1))
+        (throw (error (str "Argument must be an integer: " n)))))
+
+(defn odd?
+  "Returns true if n is odd, throws an exception if n is not an integer"
+  {:added "1.0"
+   :static true}
+  [n] (not (even? n)))
+
 (defn complement
   "Takes a fn f and returns a fn that takes the same arguments as f,
   has the same effects, if any, and returns the opposite truth value."
@@ -995,20 +1017,6 @@
   ([map key not-found]
    (fmlisp.lang/get map key not-found)))
 
-(defn dissoc
-  "dissoc[iate]. Returns a new map of the same (hashed/sorted) type,
-  that does not contain a mapping for key(s)."
-  {:added "1.0"
-   :static true}
-  ([map] map)
-  ([map key]
-   (fmlisp.lang/dissoc map key)))
-  ([map key & ks]
-   (let [ret (dissoc map key)]
-     (if ks
-       (dissoc ret (first ks) (next ks))
-       ret))))
-
 (defn disj
   "disj[oin]. Returns a new set of the same (hashed/sorted) type, that
   does not contain key(s)."
@@ -1024,3 +1032,127 @@
        (if ks
          (disj ret (first ks) (next ks))
          ret)))))
+
+(defn dissoc
+  "dissoc[iate]. Returns a new map of the same (hashed/sorted) type,
+  that does not contain a mapping for key(s)."
+  {:added "1.0"
+   :static true}
+  ([map] map)
+  ([map key]
+   (fmlisp.lang/dissoc map key))
+  ([map key & ks]
+   (let [ret (dissoc map key)]
+     (if ks
+       (dissoc ret (first ks) (next ks))
+       ret))))
+
+(defn keys
+  "Returns a sequence of the map's keys, in the same order as (seq map)."
+  {:added "1.0"
+   :static true}
+  [map] (fmlisp.lang/keys map))
+
+(defn vals
+  "Returns a sequence of the map's values, in the same order as (seq map)."
+  {:added "1.0"
+   :static true}
+  [map] (fmlisp.lang/vals map))
+
+;; NS functions
+
+; temp
+(def ns fmlisp.lang/ns)
+
+(defn all-ns
+  "Returns a sequence of all namespaces."
+  {:added "1.0"
+   :static true}
+  [] (fmlisp.lang.namespace/all-ns))
+
+(defn find-ns
+  "Returns the namespace named by the symbol or nil if it doesn't exist."
+  {:added "1.0"
+   :static true}
+  [sym] (fmlisp.lang.namespace/find-ns sym))
+
+(defn the-ns
+  "If passed a namespace, returns it. Else, when passed a symbol,
+  returns the namespace named by it, throwing an exception if not
+  found."
+  {:added "1.0"
+   :static true}
+  [x]
+  (if (is? 'Namespace x)
+    x
+    (or (find-ns x) (throw (error (str "No namespace: " x " found"))))))
+
+(defn ns-name
+  "Returns the name of the namespace, a symbol."
+  {:added "1.0"
+   :static true}
+  [ns]
+  (fmlisp.lang.namespace/ns-name ns))
+
+(defn ns-map
+  "Returns a map of all the mappings for the namespace."
+  {:added "1.0"
+   :static true}
+  [ns]
+  (fmlisp.lang.namespace/ns-map ns))
+
+(defn ns-unmap
+  "Removes the mappings for the symbol from the namespace."
+  {:added "1.0"
+   :static true}
+  [ns sym]
+  (fmlisp.lang.namespace/ns-unmap ns sym))
+
+(def
+  ^{:docs "Returns a lazy sequence consisting of the result of applying f to
+    the set of first items of each coll, followed by applying f to the
+    set of second items in each coll, until any one of the colls is
+    exhausted.  Any remaining items in other colls are ignored. Function
+    f should accept number-of-colls arguments. Returns a transducer when
+    no collection is provided."
+    :added "1.0"}
+  map fmlisp.lang/map)
+
+(defn some
+  "Returns the first logical true value of (pred x) for any x in coll,
+  else nil.  One common idiom is to use a set as pred, for example
+  this will return :fred if :fred is in the sequence, otherwise nil:
+  (some #{:fred} coll)"
+  {:added "1.0"
+   :static true}
+  [pred coll]
+    (when-let [s (seq coll)]
+      (or (pred (first s)) (some pred (next s)))))
+
+(defn intern
+  "Finds or creates a var named by the symbol name in the namespace
+  ns (which can be a symbol or a namespace), setting its root binding
+  to val if supplied. The namespace must exist. The var will adopt any
+  metadata from the name symbol. Returns the var."
+  {:added "1.0"
+   :static true}
+  ([name]
+     (let [v (fmlisp.lang/intern (the-ns *ns*) name)]
+       (when (meta name) (with-meta v (meta name)))
+       v))
+  ([ns name]
+     (let [v (fmlisp.lang/intern (the-ns ns) name)]
+       (when (meta name) (with-meta v (meta name)))
+       v))
+  ([ns name val]
+     (let [v (fmlisp.lang/intern (the-ns ns) name val)]
+       (when (meta name) (with-meta v (meta name)))
+       v)))
+
+(defn format
+  "Formats a string with arguments, see Rust `format!` macro for format
+  string syntax"
+  {:added "1.0"
+   :static true}
+  [fmt & args]
+  (fmlisp.lang/format fmt args))

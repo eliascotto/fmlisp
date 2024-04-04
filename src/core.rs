@@ -44,11 +44,7 @@ pub fn load_lang_core(env: Rc<Environment>) -> Result<(), LispErr> {
         env.insert_var(Symbol::new(k), v.to_rc_value());
     }
 
-    let fns = vec![
-        lang::core::core_functions(),
-        lang::strings::string_functions(),
-        lang::namespaces::namespace_functions(),
-    ];
+    let fns = vec![lang::core::core_functions()];
 
     for fs in fns {
         for (k, v) in fs {
@@ -59,20 +55,28 @@ pub fn load_lang_core(env: Rc<Environment>) -> Result<(), LispErr> {
     }
 
     lang::numbers::load(env.clone());
+    lang::namespaces::load(env.clone());
+    lang::strings::load(env.clone());
 
     env.change_or_create_namespace(&sym!("fmlisp.lang"));
 
     // Load language file
     // load_file("src/fmlisp/test.fml", env.clone());
-    match load_file("src/fmlisp/core.fml", env.clone()) {
-        0 => {}
-        -1 => return error!("Error loading file"),
-        _ => {}
+    let lang_files = vec!["core", "string"];
+    for file_name in lang_files.iter() {
+        match load_file(
+            format!("src/fmlisp/{}.fml", file_name).as_str(),
+            env.clone(),
+        ) {
+            0 => {}
+            -1 => return error_fmt!("Error loading file ({}.fml)", file_name),
+            _ => {}
+        }
     }
 
     // Change to default user namespace
     env.change_or_create_namespace(&Symbol::new("user"));
-
+    // Automatically refer fmlisp.core
     let _ = env.add_referred_namespace(&sym!("fmlisp.core"));
 
     Ok(())
@@ -500,7 +504,7 @@ pub fn eval_to_rc(mut ast: Value, env: Rc<Environment>) -> Result<Rc<Value>, Lis
                     }
                     Value::Symbol(ref headsym) if headsym.name() == "let*" => {
                         if args.len() < 1 || args.len() > 2 {
-                            return error!(
+                            return error_fmt!(
                                 "Wrong number of arguments given to let. Expecting 1 or 2"
                             );
                         }

@@ -171,7 +171,7 @@ fn error_with_pos(err_str: &str, r: &mut Reader) -> Result<Value, LispErr> {
     r.prev();
     let mut err = crate::errors::Error::new_from_str(String::from(err_str));
     let tok_pos = r.get_tok_pos();
-    err.add_info("at", format!("line {} col {}", tok_pos.0, tok_pos.1));
+    err.add_info("at", format!("{}:{}", tok_pos.0, tok_pos.1));
     return Err(values::LispErr::Error(err));
 }
 
@@ -270,7 +270,12 @@ pub fn read_form(r: &mut Reader) -> ValueRes {
                 }
                 // Create a set (#{..})
                 "{" => read_seq(r, "}", CollType::Set),
-                _ => return error!(format!("Wrong token found: {}", next_token.tok)),
+                _ => {
+                    return error_with_pos(
+                        format!("Wrong token found: {}", next_token.tok).as_str(),
+                        r,
+                    )
+                }
             }
         }
         "`" => {

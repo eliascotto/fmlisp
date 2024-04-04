@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -200,6 +201,10 @@ impl Namespace {
 
     pub fn get_alias(&self, alias_ns: &Symbol) -> Option<&Symbol> {
         self.aliases.get(alias_ns)
+    }
+
+    pub fn name_as_str(&self) -> &str {
+        self.name.name.as_str()
     }
 }
 
