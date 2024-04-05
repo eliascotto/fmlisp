@@ -2,11 +2,12 @@ use formatx::formatx;
 use std::fs::read_to_string;
 use std::rc::Rc;
 
-use crate::core;
 use crate::env::Environment;
 use crate::reader;
 use crate::symbol::Symbol;
 use crate::values::{LispErr, ToValue, Value, ValueRes};
+use crate::var::Var;
+use crate::{core, values};
 
 /// Returns the file content evaluated, or an error.
 pub fn load_file(path: &String, env: Rc<Environment>) -> ValueRes {
@@ -64,6 +65,12 @@ pub fn load_module(env: Rc<Environment>, mod_name: &str, defs: Vec<(&'static str
     }
 }
 
+/// Set a Var as dynamic
+pub fn set_dynamic(val: &Var) {
+    val.set_meta(values::keyword("dynamic"), Value::Bool(true));
+}
+
+/// Format a string at runtime using args. Maximum allowed parameters are 24.
 pub fn format_runtime(s: &String, args: &Vec<String>) -> Result<String, LispErr> {
     let formatted = match args.len() {
         0 => formatx!(s),
@@ -429,7 +436,7 @@ pub fn format_runtime(s: &String, args: &Vec<String>) -> Result<String, LispErr>
         ),
         _ => {
             return error_fmt!(
-                "too many arguments ({}) provided to format. (Max args 24).",
+                "Too many arguments ({}) provided to format. (Max args 24).",
                 args.len()
             )
         }

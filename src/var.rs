@@ -68,6 +68,17 @@ impl Var {
         self.meta.borrow_mut().replace(meta);
     }
 
+    /// Assign key-val to meta
+    pub fn set_meta(&self, key: Value, val: Value) {
+        let mut meta_map = match self.meta.borrow_mut().as_mut() {
+            Some(map) => Rc::get_mut(map).unwrap().to_owned(),
+            None => HashMap::new(),
+        };
+
+        meta_map.insert(key, val);
+        self.meta.borrow_mut().replace(Rc::new(meta_map));
+    }
+
     pub fn is_private(&self) -> bool {
         match self.meta() {
             Some(meta) => {

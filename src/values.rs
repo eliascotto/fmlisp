@@ -998,17 +998,17 @@ pub fn empty_tree_map() -> Value {
     Value::TreeMap(Rc::new(BTreeMap::new()), None)
 }
 
-// Create an atom from a Value
+/// Create an atom from a Value
 pub fn atom(mv: &Value) -> Value {
     Value::Atom(Rc::new(RefCell::new(mv.clone())))
 }
 
-// Create a Str from a String
+/// Create a Str from a String
 pub fn string(s: &str) -> Value {
     Value::Str(s.to_string())
 }
 
-// Creates a keyword from a string
+/// Creates a Keyword value from a string
 pub fn keyword(k: &str) -> Value {
     Value::Keyword(key!(k))
 }

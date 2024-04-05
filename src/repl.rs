@@ -931,6 +931,40 @@ mod tests {
         repl.rep("(:a d)").unwrap();
     }
 
+    #[test]
+    fn test_loop_basic() {
+        let repl = Repl::default().unwrap();
+
+        assert_eq!(
+            repl.rep("(loop [i 0] (if (< i 5) (recur (inc i)) i))")
+                .unwrap(),
+            "5"
+        );
+        assert_eq!(
+            repl.rep("(loop [i 0 acc 0] (if (< i 5) (recur (inc i) (+ acc i)) acc))")
+                .unwrap(),
+            "10"
+        );
+    }
+
+    #[test]
+    fn test_loop_nested() {
+        let repl = Repl::default().unwrap();
+
+        assert_eq!(repl.rep("(loop [i 0 j 0] (if (< i 3) (recur (inc i) 0) (if (< j 3) (recur i (inc j)) [i j])))").unwrap(), "[3 3]");
+    }
+
+    #[test]
+    fn test_loop_with_binding() {
+        let repl = Repl::default().unwrap();
+
+        assert_eq!(
+            repl.rep("(loop [i 0 x 0] (if (< i 5) (let [y (+ x i)] (recur (inc i) y)) x))")
+                .unwrap(),
+            "10"
+        );
+    }
+
     // #[test]
     // fn test_require_alias() {
     //     let repl = Repl::default().unwrap();
