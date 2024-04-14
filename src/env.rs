@@ -1,4 +1,3 @@
-use if_chain::if_chain;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -142,8 +141,8 @@ impl EnvironmentItem {
 #[derive(Debug, Clone)]
 pub enum Environment {
     MainEnvironment(EnvironmentItem),
-    // Contains Parent-Local_mapping
-    LocalEnvironment(Rc<Environment>, RefCell<HashMap<Symbol, Rc<Value>>>),
+    // Contains Parent, Local_mapping, and an ID that represent the depth
+    LocalEnvironment(Rc<Environment>, RefCell<HashMap<Symbol, Rc<Value>>>, usize),
 }
 
 impl Default for Environment {
@@ -158,13 +157,17 @@ impl Environment {
         Environment::MainEnvironment(EnvironmentItem::new(ns_name))
     }
 
-    pub fn new_local_environment(outer_environment: Rc<Environment>) -> Environment {
-        Environment::LocalEnvironment(outer_environment, RefCell::new(HashMap::new()))
+    fn new_local_environment(outer_environment: Rc<Environment>, depth: usize) -> Environment {
+        Environment::LocalEnvironment(outer_environment, RefCell::new(HashMap::new()), depth)
     }
 
     /// Create a new local environment, with the current environment as `outer_environment`
     pub fn new_local(&self) -> Environment {
-        Environment::new_local_environment(Rc::new((*self).clone()))
+        let depth = match self {
+            Environment::MainEnvironment(_) => 0,
+            Environment::LocalEnvironment(_, _, d) => d + 1,
+        };
+        Environment::new_local_environment(Rc::new((*self).clone()), depth)
     }
 
     pub fn get_main_environment(&self) -> &Self {
@@ -310,7 +313,7 @@ impl Environment {
             Environment::MainEnvironment(_) => {
                 self.insert_into_current_namespace(sym, val);
             }
-            Environment::LocalEnvironment(_, mappings) => match val.as_ref() {
+            Environment::LocalEnvironment(_, mappings, ..) => match val.as_ref() {
                 Value::Var(_) => {
                     mappings.borrow_mut().insert(sym, val);
                 }
@@ -388,7 +391,7 @@ impl Environment {
                 }
                 None => Ok(env.get_from_current_namespace(&sym)),
             },
-            Environment::LocalEnvironment(parent_env, mappings) => {
+            Environment::LocalEnvironment(parent_env, mappings, ..) => {
                 if sym.ns != None {
                     self.get_main_environment().get(sym)
                 } else {
@@ -410,7 +413,7 @@ impl Environment {
     }
 
     pub fn bind(&self, mbinds: Rc<Value>, exprs: Vec<Value>) -> Result<Rc<Environment>, LispErr> {
-        let new_env = Environment::new_local_environment(Rc::new((*self).clone()));
+        let new_env = self.new_local();
         match (*mbinds).clone() {
             Value::Vector(binds, _) => {
                 for (i, b) in binds.iter().enumerate() {

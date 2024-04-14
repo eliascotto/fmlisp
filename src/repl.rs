@@ -4,6 +4,7 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::rc::Rc;
 
+use crate::compiler::Compiler;
 use crate::core;
 use crate::env::Environment;
 use crate::error_output;
@@ -13,12 +14,14 @@ use crate::values::Value;
 
 pub struct Repl {
     environment: Rc<Environment>,
+    compiler: Rc<Compiler>,
 }
 
 impl Repl {
     pub fn new() -> Repl {
         Repl {
             environment: Rc::new(Environment::default()),
+            compiler: Rc::new(Compiler::new()),
         }
     }
 
@@ -46,7 +49,7 @@ impl Repl {
     // Read Eval Print
     pub fn rep(&self, s: &str) -> Result<String, LispErr> {
         let ast: Value = core::read(s, self.environment.clone())?;
-        let exp: Value = core::eval(ast.clone(), self.environment.clone())?;
+        let exp: Value = self.compiler.eval(ast.clone(), self.environment.clone())?;
         Ok(core::print(exp))
     }
 

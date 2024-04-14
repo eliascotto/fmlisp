@@ -1,10 +1,44 @@
-(def
-  ^{:arglist '([var])
-    :doc "Turns the Var from a function to a Macro."
-    :added "1.0"}
-  set-macro fmlisp.lang/set-macro)
+(ns test)
 
-(def ^{:private true :dynamic true}
-  assert-valid-fdecl (fn [fdecl]))
+(def
+  ^{:arglists: '([x])
+    :doc "Returns a number one greater than num. Does not auto-promote
+    longs, will throw on overflow."
+    :added "1.0"}
+  inc fmlisp.lang.numbers/inc)
 
 (def println fmlisp.lang/println)
+
+(def < fmlisp.lang/<)
+(def + fmlisp.lang.numbers/add)
+
+(loop* [i 0]
+    (if (< i 5)
+        (recur (inc i))
+        (println i)))
+
+
+(loop* [i 0 acc 0]
+    (if (< i 5)
+        (recur (inc i) (+ acc i))
+        (println acc)))
+
+(loop* [i 0 j 0]
+    (if (< i 3)
+        (recur (inc i) 0)
+        (if (< j 3)
+            (recur i (inc j))
+            (println [i j]))))
+
+(loop* [i 0 x 0]
+    (if (< i 5)
+        (let* [y (+ x i)]
+            (recur (inc i) y))
+        (println x)))
+
+(let* [x (loop* [i 0 x 0]
+            (if (< i 5)
+                (let* [y (+ x i)]
+                    (recur (inc i) y))
+                x))]
+    (println x))

@@ -6,6 +6,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use crate::compiler;
 use crate::core;
 use crate::env::Environment;
 use crate::errors;
@@ -620,7 +621,7 @@ impl Value {
                 let arity = args.len();
                 if let Some((a, p)) = core::find_ast_and_params_by_arity(ast_a, params, arity) {
                     let fn_env = env.bind(p, args.clone())?;
-                    match core::eval((*a).clone(), fn_env) {
+                    match compiler::eval((*a).clone(), fn_env) {
                         Ok(v) => return Ok(v),
                         Err(e) => return Err(core::process_error(&e, &a)),
                     }

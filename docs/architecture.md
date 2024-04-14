@@ -75,3 +75,28 @@ The Lisp Reader convert the code rappresentation into data processable by the co
 The Reader automatically convert some macros, without waiting for the code to be evaluated. For example quote, deref, comment, dispatch, metadata, syntaxquote, unquote, unquote-splicing.
 So the Reader should be able to process the AST and extend it directly before reach the _eval_ phase.
 Also the `gensym` reader macro `sym#` get's extended at _read_ time.
+
+### Compiler - eval
+
+I created a new Compiler struct that contains all the eval methods. I've done it to take track of loop labels and loop locals in a way that is global to the execution of `eval_rc`, since that method call itself recursively sometimes.
+To do that, I've saved the two variables in a struct, and added a reference `&self` to each methods. Now, into `lang/common` there are some methods that call `eval`, so in that case I need a reference to the current and only `Compiler`. This is necessary both into `lang/common` and into `values`. How can I do that?
+
+Solutions:
+
+1. I change the standard internal function signature from
+
+```rust
+(args: ExprArgs, env: Rc<Environment>) -> ValueRes
+```
+
+to
+
+```rust
+(args: ExprArgs, comp: Rc<Compiler>, env: Rc<Environment>) -> ValueRes
+```
+
+and all the time I call an internal function I pass a reference to the compiler. Could be the easy solution but adding a parameter can make it slow? Probably not
+
+2. Saving the ENV inside Compiler and so passing only `comp` around. Not sure, since `eval` in that case receives an `env`, which will be different from the one into `self`. I would not like that so, gets confusing.
+
+3.

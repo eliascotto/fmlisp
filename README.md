@@ -22,6 +22,8 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 
 ## TODO
 
+- Add incremental ID to local ENVS
+- Add `recur` support
 - Add support for _out_ variable and printing
 - fixing tests
 - `refer` function
@@ -31,6 +33,7 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 - Proc Macro to define Rust functions as plugins and load them into FMLisp at the startup
 - Add support for keyword arguments
 - Start UI with GPUI
+- Add line,column numbers to Reader output and to Eval error messages
 - Add ns exploring REPL functions as `ns-intern` (in a REPL namespace?)
 - Better error messages with problem printing, line numbers and guide to fix
 - Function arguments with types as Rust

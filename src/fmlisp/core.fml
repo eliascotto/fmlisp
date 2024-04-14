@@ -253,8 +253,7 @@
       (if (seq? (first fdecl))
         (loop [ret [] fdecls fdecl]
           (if fdecls
-            (do
-              (recur (conj ret (asig (first fdecls))) (next fdecls)))
+            (recur (conj ret (asig (first fdecls))) (next fdecls))
             (seq ret)))
         (list (asig fdecl))))))
 

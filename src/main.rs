@@ -26,6 +26,7 @@ mod env;
 mod core;
 #[macro_use]
 mod lang;
+mod compiler;
 mod namespaces;
 mod reader;
 mod repl;
