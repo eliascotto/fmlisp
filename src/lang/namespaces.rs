@@ -3,6 +3,8 @@ use itertools::Itertools;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::error;
+use crate::sym;
 use crate::env::Environment;
 use crate::keyword::Keyword;
 use crate::lang::commons;

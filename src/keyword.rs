@@ -10,9 +10,10 @@ pub struct Keyword {
 }
 
 // Create a Symbol from a String
+#[macro_export]
 macro_rules! key {
     ($x:expr) => {
-        Keyword::new($x)
+        crate::keyword::Keyword::new($x)
     };
 }
 

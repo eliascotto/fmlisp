@@ -1,10 +1,11 @@
-use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use crate::error;
+use crate::sym;
 use crate::symbol::Symbol;
 use crate::values::{LispErr, Value};
 use crate::values::{ToValue, ValueRes};

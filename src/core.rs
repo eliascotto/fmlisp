@@ -6,6 +6,11 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use crate::error;
+use crate::error_fmt;
+use crate::sym;
+use crate::argument_error;
+use crate::list;
 use crate::env::Environment;
 use crate::error_output;
 use crate::lang;

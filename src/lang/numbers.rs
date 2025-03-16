@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+use crate::error_fmt;
+use crate::argument_error;
 use crate::env::Environment;
 use crate::lang::commons;
 use crate::values::{func, ExprArgs, LispErr, Value, ValueRes};

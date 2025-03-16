@@ -1,8 +1,8 @@
-use if_chain::if_chain;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::error_fmt;
 use crate::namespaces::{Namespace, Namespaces};
 use crate::symbol::Symbol;
 use crate::values::LispErr::{self, ErrString};

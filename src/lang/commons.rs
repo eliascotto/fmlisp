@@ -2,6 +2,9 @@ use formatx::formatx;
 use std::fs::read_to_string;
 use std::rc::Rc;
 
+use crate::error;
+use crate::error_fmt;
+use crate::sym;
 use crate::env::Environment;
 use crate::reader;
 use crate::symbol::Symbol;

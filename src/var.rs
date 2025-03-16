@@ -5,7 +5,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-use crate::keyword::Keyword;
+use crate::key;
 use crate::symbol::Symbol;
 use crate::values::{ToValue, Value};
 

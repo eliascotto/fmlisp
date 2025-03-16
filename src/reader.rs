@@ -4,6 +4,10 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
+use crate::key;
+use crate::sym;
+use crate::list;
+use crate::error;
 use crate::core;
 use crate::env::Environment;
 use crate::keyword::Keyword;

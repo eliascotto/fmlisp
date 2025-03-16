@@ -5,6 +5,13 @@ use std::io::{stdin, stdout, Write};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::error;
+use crate::error_fmt;
+use crate::sym;
+use crate::list;
+use crate::vector;
+use crate::argument_error;
+use crate::set;
 use crate::core;
 use crate::env::Environment;
 use crate::errors;

@@ -6,6 +6,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use crate::key;
+use crate::sym;
 use crate::core;
 use crate::env::Environment;
 use crate::errors;
@@ -110,12 +112,14 @@ pub fn error(s: &str) -> ValueRes {
 /// ```
 /// error!("Unexpected error")
 /// ```
+#[macro_export]
 macro_rules! error {
     ($msg:expr) => {
         Err(LispErr::ErrString($msg.to_string()))
     };
 }
 
+#[macro_export]
 macro_rules! error_fmt {
     ($($arg:tt)*) => {{
         let msg = format!($($arg)*);
@@ -124,6 +128,7 @@ macro_rules! error_fmt {
     }};
 }
 
+#[macro_export]
 macro_rules! argument_error {
     ($($arg:tt)*) => {{
         let msg = format!($($arg)*);
@@ -920,7 +925,7 @@ impl ToValue for Namespace {
 }
 
 // type utility macros
-
+#[macro_export]
 macro_rules! list {
     () => (
         Value::List(Rc::new(vec![]), None)
@@ -931,6 +936,7 @@ macro_rules! list {
     }};
 }
 
+#[macro_export]
 macro_rules! vector {
     () => (
         Value::Vector(Rc::new(vec![]), None)
@@ -941,6 +947,7 @@ macro_rules! vector {
     }};
 }
 
+#[macro_export]
 macro_rules! set {
     () => {
         Value::Set(Rc::new(HashSet::default()), None)
