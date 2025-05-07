@@ -1,6 +1,7 @@
 ## FMLisp
 
-A fast and modern Lisp. Fast since is built on top of Rust, Modern because it uses Clojure modern lisp sintax. A mix between Common Lisp performance and power, and Clojure modern features.
+An interpreter for a Clojure-like language written in Rust. Prototype project not actively maintained and still in alpha stage.
+See [architecture.md](docs/architecture.md) for more info.
 
 ## Guidelines
 
@@ -14,10 +15,9 @@ A fast and modern Lisp. Fast since is built on top of Rust, Modern because it us
 - Syntactically modern as Clojure
 - Fast since based on Rust
 - No memory management involved
-- Simple language, Clojure gets too complex, it becomes difficult to learn and write proper idiomatic code. In the contrary, Rust is simple and quick to grasp
+- Simple language; Clojure can get complex, and it can become difficult to learn and write proper idiomatic code. In the contrary, Rust is simpler and quicker to grasp
   - One performant way to iterate over lists
   - Deep thinking before adding lazy loading
-  -
 - Keep the core library limited and split the extra in alternative libraries to import separately.
 
 ## TODO
